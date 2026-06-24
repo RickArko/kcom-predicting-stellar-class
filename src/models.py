@@ -40,7 +40,6 @@ def _get_xgb(params: dict | None = None):
         subsample=0.8,
         colsample_bytree=0.8,
         eval_metric="mlogloss",
-        use_label_encoder=False,
         random_state=42,
         n_jobs=-1,
     )
