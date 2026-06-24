@@ -1,0 +1,49 @@
+# Data files (download from Kaggle)
+data/*
+!data/.gitkeep
+*.csv
+*.zip
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.Python
+env/
+venv/
+.venv/
+ENV/
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+
+# Outputs
+outputs/submissions/*
+!outputs/submissions/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Models
+*.pkl
+*.joblib
+*.h5
+*.pt
+*.bin
+
+# Logs
+*.log
+logs/
+mlruns/
