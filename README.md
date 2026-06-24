@@ -2,81 +2,129 @@
 
 Kaggle Competition: [Predicting Stellar Class](https://www.kaggle.com/competitions/playground-series-s6e6) (Playground Series S6E6)
 
-## Overview
-
-Classify astronomical objects from the Sloan Digital Sky Survey (SDSS) into one of three categories:
-
-- **GALAXY** – Extended sources (galaxies)
-- **STAR** – Point sources (stars)
-- **QSO** – Quasi-stellar objects (quasars)
+Classify astronomical objects from the Sloan Digital Sky Survey (SDSS) into **GALAXY**, **STAR**, or **QSO**.
 
 **Evaluation Metric:** Balanced Accuracy  
 **Deadline:** June 30, 2026
 
-## Dataset Features
+## Happy Path — One Command
 
-| Feature | Description |
-|---------|-------------|
-| `alpha` | Right Ascension (J2000 epoch) |
-| `delta` | Declination (J2000 epoch) |
-| `u`, `g`, `r`, `i`, `z` | Photometric magnitudes (UV → Infrared) |
-| `redshift` | Redshift value (key discriminator) |
-| `obj_ID` | Unique SDSS object identifier |
-| `run_ID`, `rerun_ID`, `cam_col`, `field_ID` | Scan metadata |
-| `spec_obj_ID`, `fiber_ID`, `plate`, `MJD` | Spectroscopic metadata |
-| `class` | **Target** – GALAXY, STAR, or QSO |
+```bash
+# Requires Kaggle API token (see setup below)
+make all
+```
 
-## Approach
+This single command runs the entire pipeline:
 
-1. **EDA** – Distribution analysis, correlation heatmaps, class balance
-2. **Feature Engineering** – Photometric color indices (`u-g`, `g-r`, `r-i`, `i-z`), drop low-signal columns
-3. **Modeling** – LightGBM, XGBoost, CatBoost with stratified k-fold CV
-4. **Ensemble** – Stacking with Logistic Regression meta-model
+```mermaid
+graph LR
+    A[make all] --> B[make install]
+    B --> C[uv sync + auth]
+    C --> D[make download]
+    D --> E[fetch data from Kaggle]
+    E --> F[make train]
+    F --> G[train 5-fold ensemble]
+    G --> H[save submission.csv]
+    H --> I[make submit]
+    I --> J[upload to Kaggle]
+    J --> K[show leaderboard]
+```
+
+## Kaggle API Setup
+
+```bash
+# Option A: Set environment variable
+export KAGGLE_API_TOKEN=KGAT_<your-token>
+
+# Option B: Write token to file
+echo -n "KGAT_<your-token>" > .kaggle/access_token
+chmod 600 .kaggle/access_token
+
+# Get your token at: https://www.kaggle.com/settings -> API -> Create New Token
+```
+
+## Detailed Step-by-Step
+
+```bash
+# 1. Install dependencies + authenticate
+make install
+
+# 2. Download competition data
+make download
+
+# 3. Train ensemble & generate submission
+make train
+
+# 4. Submit to leaderboard
+make submit
+
+# 5. Run tests
+make test
+```
+
+## Custom Submission
+
+```bash
+# Submit a different file with custom message
+make submit SUBMISSION_FILE=outputs/submissions/experiment_v2.csv SUBMISSION_MSG="v2: added spectral_type encoding"
+```
+
+## Development
+
+```bash
+make lint      # ruff check
+make format    # ruff format
+make test      # pytest
+make submit    # submit to Kaggle leaderboard
+```
 
 ## Repository Structure
 
 ```
-kcom-predicting-stellar-class/
-├── README.md
-├── .gitignore
-├── requirements.txt
-├── config/
-│   └── config.yaml          # Experiment configuration
-├── data/                    # Not tracked by git — download from Kaggle
-│   ├── train.csv
-│   └── test.csv
-├── notebooks/
-│   ├── 01_eda.ipynb         # Exploratory Data Analysis
-│   ├── 02_feature_engineering.ipynb
-│   └── 03_modeling.ipynb
-├── src/
-│   ├── __init__.py
-│   ├── data.py              # Data loading & preprocessing
-│   ├── features.py          # Feature engineering
-│   └── models.py            # Model training & evaluation
-└── outputs/
-    └── submissions/         # Generated submission CSVs
+├── config/config.yaml          # Experiment configuration
+├── data/                       # Train/test CSVs (download with make download)
+├── src/stellar/                # Python package
+│   ├── data.py                 # Data loading & preprocessing
+│   ├── features.py             # Feature engineering (color indices)
+│   └── models.py               # LGBM + XGB + CatBoost + stacking ensemble
+├── scripts/
+│   ├── train.py                # End-to-end training pipeline
+│   └── predict.py              # Inference & submission generation
+├── tests/
+│   ├── test_models.py          # Unit tests
+│   └── test_integration.py     # Integration tests (synthetic data)
+├── outputs/submissions/        # Generated submission CSVs
+├── Makefile                    # Automation targets
+└── pyproject.toml              # Project & dependency config (uv sync)
 ```
 
-## Setup
+## Pipeline Architecture
 
-```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Download data (requires Kaggle API token)
-kaggle competitions download -c playground-series-s6e6 -p data/
-unzip data/playground-series-s6e6.zip -d data/
+```mermaid
+flowchart TD
+    A[Raw Data] --> B[Feature Engineering]
+    B --> C[drop ID/metadata cols]
+    B --> D[photometric color indices]
+    B --> E[u-g, g-r, r-i, i-z]
+    
+    E --> F[Stratified 5-Fold CV]
+    
+    F --> G[LightGBM]
+    F --> H[XGBoost]
+    F --> I[CatBoost]
+    
+    G --> J[OOF Probabilities]
+    H --> J
+    I --> J
+    
+    J --> K[Logistic Regression Meta-Model]
+    K --> L[Final Predictions]
+    L --> M[submission.csv]
 ```
 
-## Quick Start
+## Approach
 
-```python
-from src.data import load_data
-from src.features import make_features
-from src.models import train_cv
-
-train, test = load_data("data/")
-X_train, X_test, y_train = make_features(train, test)
-oof_preds, test_preds = train_cv(X_train, y_train, X_test)
-```
+1. **Feature Engineering** — Drop low-signal ID/scan metadata, derive photometric color indices from SDSS band magnitudes
+2. **Base Models** — LightGBM, XGBoost, CatBoost trained with stratified 5-fold cross-validation
+3. **Stacking** — Logistic Regression meta-model on out-of-fold probability predictions
+4. **Evaluation** — Balanced accuracy (competition metric)

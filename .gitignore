@@ -8,23 +8,37 @@ data/*
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
+.Python
+.venv/
+venv/
 *.egg-info/
 dist/
 build/
 .eggs/
-*.egg
-.Python
-env/
-venv/
-.venv/
-ENV/
 
 # Jupyter Notebooks
 .ipynb_checkpoints/
 
-# Outputs
+# Outputs / Submissions
 outputs/submissions/*
 !outputs/submissions/.gitkeep
+submissions/
+
+# Models
+models/
+*.pkl
+*.joblib
+*.cbm
+*.txt.bst
+
+# uv
+.uv/
+.uv_sync
+
+# Kaggle credentials
+.kaggle/*
+!.kaggle/*.example
 
 # IDE
 .vscode/
@@ -36,14 +50,14 @@ outputs/submissions/*
 .DS_Store
 Thumbs.db
 
-# Models
-*.pkl
-*.joblib
-*.h5
-*.pt
-*.bin
+# Environment
+.env
+*.env
 
 # Logs
 *.log
 logs/
 mlruns/
+
+# CatBoost
+catboost_info/

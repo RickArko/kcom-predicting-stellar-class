@@ -12,6 +12,7 @@ paths:
   data: data/
   outputs: outputs/
   submissions: outputs/submissions/
+  models: models/
 
 features:
   drop_cols:
@@ -23,6 +24,10 @@ features:
     - field_ID
     - spec_obj_ID
     - fiber_ID
+    - spectral_type
+    - galaxy_population
+    - plate
+    - MJD
   color_pairs:
     - [u, g]
     - [g, r]

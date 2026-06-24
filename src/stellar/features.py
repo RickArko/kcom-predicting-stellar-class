@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import pandas as pd
 
-
 # Columns that carry no predictive signal (IDs and scan metadata)
 _DEFAULT_DROP = [
     "id",
@@ -15,6 +14,10 @@ _DEFAULT_DROP = [
     "field_ID",
     "spec_obj_ID",
     "fiber_ID",
+    "spectral_type",
+    "galaxy_population",
+    "plate",
+    "MJD",
 ]
 
 # Photometric band pairs used to derive colour indices
