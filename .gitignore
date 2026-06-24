@@ -61,3 +61,6 @@ mlruns/
 
 # CatBoost
 catboost_info/
+
+
+.ai/*

@@ -1,82 +1,88 @@
-"""Inference and submission generation for Predicting Stellar Class.
+"""Inference from a saved ensemble for Predicting Stellar Class.
 
 Usage:
-    uv run python scripts/predict.py [--config CONFIG_PATH] [--model-path MODEL_PATH]
-
-Runs the full feature pipeline on test data and generates a submission CSV.
-Currently uses the same stacked ensemble from train_cv; for production use
-load a saved model ensemble from disk.
+    uv run python scripts/predict.py --run-dir outputs/runs/20260624_143042_experiment-name
+    uv run python scripts/predict.py --run-dir outputs/runs/latest  # symlink works too
 """
 
 from __future__ import annotations
 
 import argparse
-import sys
+import logging
+import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
-
 from stellar.data import load_config, load_data
-from stellar.features import make_features
-from stellar.models import save_submission, train_cv
+from stellar.features import ColorFeatureEngineer
+from stellar.models import StackingEnsemble, save_submission
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)-7s | %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Generate stellar class predictions.")
+    parser = argparse.ArgumentParser(description="Generate submissions from a trained ensemble.")
     parser.add_argument(
-        "--config", type=str, default="config/config.yaml", help="Path to config YAML"
+        "--run-dir",
+        type=str,
+        required=True,
+        help="Path to an experiment run directory containing models/",
     )
-    parser.add_argument("--model-path", type=str, default=None, help="Path to saved model (future)")
+    parser.add_argument(
+        "--output",
+        type=str,
+        default=None,
+        help="Output path for submission CSV (default: run-dir/submission.csv)",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    cfg = load_config(args.config)
+    run_dir = Path(args.run_dir)
+    config_path = run_dir / "config.yaml"
+    model_path = run_dir / "models" / "ensemble.joblib"
 
-    print("=" * 60)
-    print("Predicting Stellar Class - Inference Pipeline")
-    print("=" * 60)
+    if not config_path.exists():
+        logger.error("Config not found at %s", config_path)
+        raise SystemExit(1)
+    if not model_path.exists():
+        logger.error("Ensemble model not found at %s", model_path)
+        raise SystemExit(1)
+
+    cfg = load_config(str(config_path))
 
     # -- 1. Load data --------------------------------------------------
-    print("\n[1/4] Loading data...")
+    logger.info("[1/4] Loading data ...")
     train, test = load_data(cfg["paths"]["data"])
 
-    # -- 2. Feature engineering ----------------------------------------
-    print("\n[2/4] Engineering features...")
+    # -- 2. Feature engineering (must match training) ------------------
+    logger.info("[2/4] Engineering features ...")
+    target_col = cfg["competition"]["target"]
     feat_cfg = cfg["features"]
-    X_train, X_test, y_train = make_features(
-        train, test,
-        target_col=cfg["competition"]["target"],
+    engineer = ColorFeatureEngineer(
         drop_cols=feat_cfg["drop_cols"],
         color_pairs=[tuple(p) for p in feat_cfg["color_pairs"]],
     )
+    engineer.fit(train.drop(columns=[target_col]))
+    X_test = engineer.transform(test.copy())
+    logger.info("  X_test: %s", X_test.shape)
 
-    # -- 3. Predict with ensemble --------------------------------------
-    print("\n[3/4] Running ensemble prediction...")
-    cv_cfg = cfg["cv"]
-    model_params = {
-        "lgbm": cfg.get("lgbm"),
-        "xgb": cfg.get("xgb"),
-        "catboost": cfg.get("catboost"),
-    }
-    _, test_preds = train_cv(
-        X_train, y_train, X_test,
-        n_splits=cv_cfg["n_splits"],
-        random_state=cv_cfg["random_state"],
-        model_params=model_params,
-    )
+    # -- 3. Load ensemble and predict ----------------------------------
+    logger.info("[3/4] Loading ensemble from %s ...", model_path)
+    t0 = time.time()
+    ensemble = StackingEnsemble.load(model_path)
+    test_preds = ensemble.predict(X_test)
+    logger.info("  Predicted %d rows (%.1fs)", len(test_preds), time.time() - t0)
 
     # -- 4. Save submission --------------------------------------------
-    print("\n[4/4] Saving submission...")
-    output_path = Path(cfg["paths"]["submissions"]) / "submission.csv"
-    save_submission(
-        test_ids=test["id"],
-        predictions=test_preds,
-        output_path=str(output_path),
-    )
-
-    print("\nDone!")
+    output_path = args.output or str(run_dir / "submission.csv")
+    logger.info("[4/4] Saving submission → %s", output_path)
+    save_submission(test["id"], test_preds, output_path)
+    logger.info("Done!")
 
 
 if __name__ == "__main__":

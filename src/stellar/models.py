@@ -1,151 +1,159 @@
-"""Model training, cross-validation, and ensembling utilities."""
-
 from __future__ import annotations
 
+from pathlib import Path
+
+import joblib
 import numpy as np
 import pandas as pd
+from sklearn.base import clone
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import balanced_accuracy_score
-from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import LabelEncoder
 
 
-def _get_lgbm(params: dict | None = None):
-    from lightgbm import LGBMClassifier
+class StackingEnsemble:
+    """Stacking ensemble with stratified k-fold CV and OOF meta-features.
 
-    defaults = dict(
-        n_estimators=1000,
-        learning_rate=0.05,
-        num_leaves=127,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        reg_alpha=0.1,
-        reg_lambda=0.1,
-        random_state=42,
-        n_jobs=-1,
-        verbose=-1,
-    )
-    if params:
-        defaults.update(params)
-    return LGBMClassifier(**defaults)
-
-
-def _get_xgb(params: dict | None = None):
-    from xgboost import XGBClassifier
-
-    defaults = dict(
-        n_estimators=1000,
-        learning_rate=0.05,
-        max_depth=6,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        eval_metric="mlogloss",
-        random_state=42,
-        n_jobs=-1,
-    )
-    if params:
-        defaults.update(params)
-    return XGBClassifier(**defaults)
-
-
-def _get_catboost(params: dict | None = None):
-    from catboost import CatBoostClassifier
-
-    defaults = dict(
-        iterations=1000,
-        learning_rate=0.05,
-        depth=6,
-        l2_leaf_reg=3,
-        random_seed=42,
-        verbose=0,
-    )
-    if params:
-        defaults.update(params)
-    return CatBoostClassifier(**defaults)
-
-
-def train_cv(
-    X_train: pd.DataFrame,
-    y_train: pd.Series,
-    X_test: pd.DataFrame,
-    n_splits: int = 5,
-    random_state: int = 42,
-    model_params: dict | None = None,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Train LightGBM, XGBoost, and CatBoost with stratified k-fold CV and
-    combine predictions using a Logistic Regression meta-model (stacking).
+    Trains a set of base models via cross-validation, collects out-of-fold
+    probability predictions, and trains a Logistic Regression meta-model on
+    those predictions for final calibration.
 
     Parameters
     ----------
-    X_train, y_train:
-        Training features and string target labels.
-    X_test:
-        Test features.
-    n_splits:
-        Number of CV folds.
-    random_state:
-        Random seed for reproducibility.
-    model_params:
-        Optional dict with keys ``lgbm``, ``xgb``, ``catboost`` to override
-        default hyper-parameters for each base learner.
-
-    Returns
-    -------
-    oof_preds:
-        Out-of-fold predictions (shape: n_train × n_classes).
-    test_preds:
-        Final test set class predictions as a 1-D array of string labels.
+    base_models:
+        List of ``(name, estimator)`` tuples.  Each estimator must be
+        sklearn-compatible (implement ``get_params`` / ``set_params`` so
+        that ``sklearn.base.clone`` works).
+    meta_model:
+        The meta-learner.  Defaults to ``LogisticRegression(max_iter=1000)``.
     """
-    model_params = model_params or {}
 
-    le = LabelEncoder()
-    y_enc = le.fit_transform(y_train)
-    n_classes = len(le.classes_)
+    def __init__(
+        self,
+        base_models: list[tuple[str, object]],
+        meta_model: object | None = None,
+    ):
+        self.base_models = base_models
+        self.meta_model = meta_model or LogisticRegression(max_iter=1000, random_state=42)
+        self.fold_models_: list[dict[str, object]] = []
+        self.meta_model_: object | None = None
+        self.label_encoder_: LabelEncoder | None = None
+        self.n_classes_: int | None = None
+        self.valid_scores_: list[float] = []
+        self.overall_oof_score_: float | None = None
 
-    skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
+    def fit(
+        self,
+        X: pd.DataFrame,
+        y: pd.Series,
+        cv: object,
+        X_test: pd.DataFrame | None = None,
+    ) -> StackingEnsemble:
+        """Fit the stacking ensemble.
 
-    base_models = [
-        ("lgbm", _get_lgbm(model_params.get("lgbm"))),
-        ("xgb", _get_xgb(model_params.get("xgb"))),
-        ("catboost", _get_catboost(model_params.get("catboost"))),
-    ]
+        Parameters
+        ----------
+        X:
+            Training features.
+        y:
+            Training target (string class labels).
+        cv:
+            A cross-validator (e.g. ``StratifiedKFold``).
+        X_test:
+            Optional test set.  When provided, test-set probability
+            predictions are computed during training (avoids re-running
+            all fold models later for the competition test set).
 
-    # Arrays to hold OOF and test probability predictions from each base model
-    oof_proba = {name: np.zeros((len(X_train), n_classes)) for name, _ in base_models}
-    test_proba = {name: np.zeros((len(X_test), n_classes)) for name, _ in base_models}
+        Returns
+        -------
+        self
+        """
+        le = LabelEncoder()
+        y_enc = le.fit_transform(y)
+        self.label_encoder_ = le
+        self.n_classes_ = len(le.classes_)
 
-    for fold, (train_idx, val_idx) in enumerate(skf.split(X_train, y_enc), 1):
-        X_tr, X_val = X_train.iloc[train_idx], X_train.iloc[val_idx]
-        y_tr, y_val = y_enc[train_idx], y_enc[val_idx]
+        n_train = len(X)
+        has_test = X_test is not None
+        n_test = len(X_test) if has_test else 0
 
-        for name, model in base_models:
-            model.fit(X_tr, y_tr)
-            oof_proba[name][val_idx] = model.predict_proba(X_val)
-            test_proba[name] += model.predict_proba(X_test) / n_splits
+        oof_probas: dict[str, np.ndarray] = {
+            name: np.zeros((n_train, self.n_classes_)) for name, _ in self.base_models
+        }
+        if has_test:
+            test_probas: dict[str, np.ndarray] = {
+                name: np.zeros((n_test, self.n_classes_)) for name, _ in self.base_models
+            }
 
-        fold_preds = np.argmax(
-            sum(oof_proba[n][val_idx] for n, _ in base_models), axis=1
-        )
-        fold_score = balanced_accuracy_score(y_val, fold_preds)
-        print(f"Fold {fold} balanced accuracy: {fold_score:.4f}")
+        for fold, (train_idx, val_idx) in enumerate(cv.split(X, y_enc)):
+            X_tr, X_val = X.iloc[train_idx], X.iloc[val_idx]
+            y_tr, y_val = y_enc[train_idx], y_enc[val_idx]
 
-    # Stack OOF probabilities as meta-features
-    oof_meta = np.hstack([oof_proba[n] for n, _ in base_models])
-    test_meta = np.hstack([test_proba[n] for n, _ in base_models])
+            fold_models: dict[str, object] = {}
+            for name, model in self.base_models:
+                m = clone(model)
+                m.fit(X_tr, y_tr)
+                fold_models[name] = m
+                oof_probas[name][val_idx] = m.predict_proba(X_val)
+                if has_test:
+                    test_probas[name] += m.predict_proba(X_test) / cv.get_n_splits()
 
-    meta_model = LogisticRegression(max_iter=1000, random_state=random_state)
-    meta_model.fit(oof_meta, y_enc)
+            self.fold_models_.append(fold_models)
 
-    oof_final = meta_model.predict(oof_meta)
-    print(
-        f"\nOOF balanced accuracy (stacked): "
-        f"{balanced_accuracy_score(y_enc, oof_final):.4f}"
-    )
+            fold_preds_enc = np.argmax(
+                sum(oof_probas[n][val_idx] for n, _ in self.base_models), axis=1
+            )
+            score = balanced_accuracy_score(y_val, fold_preds_enc)
+            self.valid_scores_.append(score)
 
-    test_final_enc = meta_model.predict(test_meta)
-    test_preds = le.inverse_transform(test_final_enc)
+        oof_meta = np.hstack([oof_probas[n] for n, _ in self.base_models])
+        self.meta_model_ = clone(self.meta_model)
+        self.meta_model_.fit(oof_meta, y_enc)
 
-    return oof_meta, test_preds
+        oof_final_enc = self.meta_model_.predict(oof_meta)
+        self.overall_oof_score_ = balanced_accuracy_score(y_enc, oof_final_enc)
+
+        if has_test:
+            self.test_meta_ = np.hstack([test_probas[n] for n, _ in self.base_models])
+        else:
+            self.test_meta_ = None
+
+        return self
+
+    def predict(self, X: pd.DataFrame) -> np.ndarray:
+        """Predict class labels for new data.
+
+        Parameters
+        ----------
+        X:
+            Feature DataFrame.
+
+        Returns
+        -------
+        1-D array of string class labels.
+        """
+        n = len(X)
+        n_folds = len(self.fold_models_)
+
+        test_probas: dict[str, np.ndarray] = {
+            name: np.zeros((n, self.n_classes_)) for name, _ in self.base_models
+        }
+        for fold_models in self.fold_models_:
+            for name, _ in self.base_models:
+                test_probas[name] += fold_models[name].predict_proba(X) / n_folds
+
+        test_meta = np.hstack([test_probas[n] for n, _ in self.base_models])
+        preds_enc = self.meta_model_.predict(test_meta)
+        return self.label_encoder_.inverse_transform(preds_enc)
+
+    def save(self, path: str | Path) -> None:
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        joblib.dump(self, path)
+
+    @classmethod
+    def load(cls, path: str | Path) -> StackingEnsemble:
+        return joblib.load(path)
 
 
 def save_submission(
@@ -153,20 +161,7 @@ def save_submission(
     predictions: np.ndarray,
     output_path: str = "outputs/submissions/submission.csv",
 ) -> None:
-    """Write a submission CSV in the required format (id, class).
-
-    Parameters
-    ----------
-    test_ids:
-        The ``id`` column from the test DataFrame.
-    predictions:
-        1-D array of string class labels (GALAXY, STAR, QSO).
-    output_path:
-        Path where the CSV will be saved.
-    """
-    import os
-
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    out = Path(output_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
     submission = pd.DataFrame({"id": test_ids, "class": predictions})
-    submission.to_csv(output_path, index=False)
-    print(f"Submission saved to {output_path} ({len(submission)} rows)")
+    submission.to_csv(out, index=False)

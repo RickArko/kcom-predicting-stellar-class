@@ -4,16 +4,19 @@ TOKEN_FILE := .kaggle/access_token
 
 SUBMISSION_FILE ?= outputs/submissions/submission.csv
 SUBMISSION_MSG  ?= "benchmark: stacked LGBM+XGB+CatBoost with LogisticRegression meta"
+CONFIG          ?= config/config.yaml
+RUN_NAME        ?=
 
 .PHONY: all install download train predict submit test lint format clean
 
 all: install download train submit
 	@echo ""
 	@echo "========================================================"
-	echo " Happy path complete! Check leaderboard above.       "
+	@echo "  Happy path complete! Check leaderboard above."
 	@echo "========================================================"
 
 install: .uv_sync
+	uv pip install -e .
 	@$(MAKE) _ensure_kaggle_auth
 	@echo ""
 	@echo "All set. Run 'make download' to fetch the competition data."
@@ -47,7 +50,7 @@ download:
 	echo "  Data ready in $(DATA_DIR)/"
 
 train:
-	@uv run python scripts/train.py $(ARGS)
+	@uv run python scripts/train.py --config $(CONFIG) $(if $(RUN_NAME),--run-name $(RUN_NAME),) $(ARGS)
 
 predict:
 	@uv run python scripts/predict.py $(ARGS)
@@ -74,6 +77,9 @@ lint:
 	@uv run ruff check src/ scripts/ tests/
 
 format:
+	@uv run ruff format src/ scripts/ tests/ --check
+
+format-fix:
 	@uv run ruff format src/ scripts/ tests/
 
 .uv_sync: pyproject.toml uv.lock
