@@ -1,104 +1,82 @@
 # kcom-predicting-stellar-class
 
-Kaggle Competition: [Predicting Stellar Class](https://www.kaggle.com/competitions/playground-series-s6e6) (Playground Series S6E6)
+Classify SDSS astronomical objects as **GALAXY**, **STAR**, or **QSO**.
+[Kaggle Playground Series S6E6](https://www.kaggle.com/competitions/playground-series-s6e6) · Metric: **balanced accuracy** · Deadline: June 30, 2026
 
-Classify astronomical objects from the Sloan Digital Sky Survey (SDSS) into **GALAXY**, **STAR**, or **QSO**.
+## Results
 
-**Evaluation Metric:** Balanced Accuracy  
-**Deadline:** June 30, 2026
+![Submission Scores](docs/figures/submission_scores.png)
 
-## Happy Path — One Command
+| Submission | CV (OOF) | Public LB | Private LB |
+|---|---|---|---|
+| benchmark (v001) | 0.9526 | 0.9544 | — |
+| **final** (augment + interactions + 5-fold/1000 + threshold tuning) | **0.9641** | **0.9640** | — |
+
+Private LB populates after the competition ends. Regenerate after new submissions:
 
 ```bash
-# Requires Kaggle API token (see setup below)
-make all
+make visualize
 ```
 
-This single command runs the entire pipeline:
+**Key levers** (benchmark → final, +0.0115 OOF):
+- **Per-class threshold tuning** (+0.0070) — Nelder-Mead simplex search on OOF probabilities, directly optimizing balanced accuracy instead of plain argmax
+- **5-fold / 1000 estimators** (+0.0039) — better base models and OOF estimates
+- **Original-data augmentation** (+0.0004) — 100k real SDSS17 rows appended to 577k synthetic
+- **Interaction features** (+0.0002) — `redshift × colour`, `colour × colour` (helps only when OHE categoricals are dropped)
 
-```mermaid
-graph LR
-    A[make all] --> B[make install]
-    B --> C[uv sync + auth]
-    C --> D[make download]
-    D --> E[fetch data from Kaggle]
-    E --> F[make train]
-    F --> G[train 5-fold ensemble]
-    G --> H[save submission.csv]
-    H --> I[make submit]
-    I --> J[upload to Kaggle]
-    J --> K[show leaderboard]
+See [`Iteration.md`](Iteration.md) for the full experiment log and [`docs/experiments/`](docs/experiments/) for per-topic reports.
+
+## Quick Start
+
+```bash
+make install          # uv sync + kaggle auth (one-time)
+make download         # fetch competition data (one-time)
+make train            # train ensemble → submission.csv
+make submit           # upload to Kaggle + show leaderboard
+```
+
+**Happy path** (full pipeline in one command): `make all`
+
+## Beat the Benchmark
+
+```bash
+# 1. Download the original SDSS17 dataset for augmentation
+uv run kaggle datasets download -d fedesoriano/stellar-classification-dataset-sdss17 -p data/
+unzip -o data/stellar-classification-dataset-sdss17.zip -d data/ && mv data/star_classification.csv data/original.csv
+
+# 2. Train the final model (~22 min on CPU)
+make train CONFIG=config/experiments/final.yaml RUN_NAME=final
+
+# 3. Compare against all prior experiments
+uv run python scripts/compare.py
+
+# 4. Submit
+make submit SUBMISSION_FILE=outputs/runs/<timestamp>_final/submission.csv \
+           SUBMISSION_MSG="final: augment + interactions + 5-fold/1000 + threshold tuning"
+```
+
+Re-predict without retraining:
+
+```bash
+uv run python scripts/predict.py --run-dir outputs/runs/<timestamp>_final
 ```
 
 ## Kaggle API Setup
 
 ```bash
-# Option A: Set environment variable
+# Option A: environment variable
 export KAGGLE_API_TOKEN=KGAT_<your-token>
 
-# Option B: Write token to file
+# Option B: token file
 echo -n "KGAT_<your-token>" > .kaggle/access_token
 chmod 600 .kaggle/access_token
 
-# Get your token at: https://www.kaggle.com/settings -> API -> Create New Token
+# Get your token at https://www.kaggle.com/settings → API → Create New Token
 ```
 
-## Detailed Step-by-Step
+You must **join the competition** (Accept Rules) on the Kaggle page before `make download` works.
 
-```bash
-# 1. Install dependencies + authenticate
-make install
-
-# 2. Download competition data
-make download
-
-# 3. Train ensemble & generate submission
-make train
-
-# 4. Submit to leaderboard
-make submit
-
-# 5. Run tests
-make test
-```
-
-## Custom Submission
-
-```bash
-# Submit a different file with custom message
-make submit SUBMISSION_FILE=outputs/submissions/experiment_v2.csv SUBMISSION_MSG="v2: added spectral_type encoding"
-```
-
-## Development
-
-```bash
-make lint      # ruff check
-make format    # ruff format
-make test      # pytest
-make submit    # submit to Kaggle leaderboard
-```
-
-## Repository Structure
-
-```
-├── config/config.yaml          # Experiment configuration
-├── data/                       # Train/test CSVs (download with make download)
-├── src/stellar/                # Python package
-│   ├── data.py                 # Data loading & preprocessing
-│   ├── features.py             # Feature engineering (color indices)
-│   └── models.py               # LGBM + XGB + CatBoost + stacking ensemble
-├── scripts/
-│   ├── train.py                # End-to-end training pipeline
-│   └── predict.py              # Inference & submission generation
-├── tests/
-│   ├── test_models.py          # Unit tests
-│   └── test_integration.py     # Integration tests (synthetic data)
-├── outputs/submissions/        # Generated submission CSVs
-├── Makefile                    # Automation targets
-└── pyproject.toml              # Project & dependency config (uv sync)
-```
-
-## Pipeline Architecture
+## Pipeline
 
 ```mermaid
 flowchart TD
@@ -106,54 +84,47 @@ flowchart TD
     B --> C[drop ID/metadata cols]
     B --> D[photometric color indices]
     B --> E[u-g, g-r, r-i, i-z]
-    
-    E --> F[Stratified 5-Fold CV]
-    
-    F --> G[LightGBM]
-    F --> H[XGBoost]
-    F --> I[CatBoost]
-    
-    G --> J[OOF Probabilities]
-    H --> J
-    I --> J
-    
-    J --> K[Logistic Regression Meta-Model]
-    K --> L[Final Predictions]
-    L --> M[submission.csv]
+    B --> F[interaction features]
+    E --> G[Stratified 5-Fold CV]
+    F --> G
+    G --> H[LightGBM + XGBoost + CatBoost]
+    H --> I[OOF Probabilities]
+    I --> J[Threshold Tuning]
+    J --> K[Final Predictions]
+    K --> L[submission.csv]
 ```
 
-## Approach
+- **Features** — drop metadata/ID, derive SDSS colour indices (`u-g, g-r, r-i, i-z`), add `redshift × colour` interactions
+- **Base models** — LightGBM, XGBoost, CatBoost (5-fold stratified CV, 1000 estimators)
+- **Meta** — simple average of base-model probabilities + per-class threshold tuning
+- **Augmentation** — 100k original SDSS17 rows concatenated with 577k synthetic training rows
 
-1. **Feature Engineering** — Drop low-signal ID/scan metadata, derive photometric color indices from SDSS band magnitudes
-2. **Base Models** — LightGBM, XGBoost, CatBoost trained with stratified 5-fold cross-validation
-3. **Stacking** — Logistic Regression meta-model on out-of-fold probability predictions
-4. **Evaluation** — Balanced accuracy (competition metric)
-
-
-
-### Beat the Benchmark
+## Development
 
 ```bash
-# Download the original SDSS17 dataset for augmentation
-uv run kaggle datasets download -d fedesoriano/stellar-classification-dataset-sdss17 -p data/
-unzip -o data/stellar-classification-dataset-sdss17.zip -d data/
-mv data/star_classification.csv data/original.csv
-rm data/stellar-classification-dataset-sdss17.zip
-
-# Train the final model (~22 min on CPU)
-make train CONFIG=config/experiments/final.yaml RUN_NAME=final
-
-# Compare against all prior experiments
-uv run python scripts/compare.py
-
-# Submit to the public leaderboard
-make submit SUBMISSION_FILE=outputs/runs/<timestamp>_final/submission.csv \
-           SUBMISSION_MSG="final: augment + interactions + 5-fold/1000 + threshold tuning (OOF 0.9641)"
+make lint           # ruff check
+make format         # ruff format --check
+make format-fix     # apply formatting
+make test           # pytest (synthetic data, no Kaggle needed)
+make visualize      # regenerate submission score chart
 ```
 
-The canonical submission is also at `outputs/submissions/submission.csv` after
-training. To re-predict without retraining:
+Submit a custom file:
 
 ```bash
-uv run python scripts/predict.py --run-dir outputs/runs/<timestamp>_final
+make submit SUBMISSION_FILE=outputs/runs/<name>/submission.csv SUBMISSION_MSG="description"
+```
+
+## Repository Structure
+
+```
+config/
+  config.yaml              # tuned default (5-fold, 1000 estimators)
+  baseline.yaml            # fast reference (3-fold, 250 estimators)
+  experiments/             # v001–v009 + final.yaml
+src/stellar/               # data.py, features.py, models.py, tracking.py
+scripts/                   # train.py, predict.py, compare.py, visualize.py
+tests/                     # unit + integration (synthetic SDSS-like data)
+docs/experiments/          # per-topic experiment reports
+outputs/runs/              # timestamped run artifacts (config, metrics, model, submission)
 ```

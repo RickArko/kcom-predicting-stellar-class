@@ -7,7 +7,7 @@ SUBMISSION_MSG  ?= "benchmark: stacked LGBM+XGB+CatBoost with LogisticRegression
 CONFIG          ?= config/config.yaml
 RUN_NAME        ?=
 
-.PHONY: all install download train predict submit test lint format clean
+.PHONY: all install download train predict submit test lint format format-fix visualize clean
 
 all: install download train submit
 	@echo ""
@@ -81,6 +81,9 @@ format:
 
 format-fix:
 	@uv run ruff format src/ scripts/ tests/
+
+visualize:
+	@uv run python scripts/visualize.py $(ARGS)
 
 .uv_sync: pyproject.toml uv.lock
 	uv sync --extra dev

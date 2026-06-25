@@ -478,6 +478,11 @@ dev = [
     { name = "ruff" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "matplotlib" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "catboost", specifier = ">=1.2" },
@@ -494,6 +499,9 @@ requires-dist = [
     { name = "xgboost", specifier = ">=2.0" },
 ]
 provides-extras = ["dev"]
+
+[package.metadata.requires-dev]
+dev = [{ name = "matplotlib", specifier = ">=3.11.0" }]
 
 [[package]]
 name = "kiwisolver"
