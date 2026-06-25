@@ -48,6 +48,7 @@ class StackingEnsemble:
         y: pd.Series,
         cv: object,
         X_test: pd.DataFrame | None = None,
+        model_fit_kwargs: dict[str, dict] | None = None,
     ) -> StackingEnsemble:
         """Fit the stacking ensemble.
 
@@ -63,6 +64,11 @@ class StackingEnsemble:
             Optional test set.  When provided, test-set probability
             predictions are computed during training (avoids re-running
             all fold models later for the competition test set).
+        model_fit_kwargs:
+            Optional dict mapping model name to keyword arguments passed
+            to that model's ``fit()`` method.  Useful for models whose
+            sklearn wrappers accept per-fit params (e.g. CatBoost's
+            ``cat_features``) that cannot survive ``sklearn.base.clone``.
 
         Returns
         -------
@@ -92,7 +98,8 @@ class StackingEnsemble:
             fold_models: dict[str, object] = {}
             for name, model in self.base_models:
                 m = clone(model)
-                m.fit(X_tr, y_tr)
+                kwargs = (model_fit_kwargs or {}).get(name, {})
+                m.fit(X_tr, y_tr, **kwargs)
                 fold_models[name] = m
                 oof_probas[name][val_idx] = m.predict_proba(X_val)
                 if has_test:
