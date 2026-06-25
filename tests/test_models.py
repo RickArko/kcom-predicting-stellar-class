@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
@@ -50,6 +52,45 @@ class TestColorFeatureEngineer:
         assert "i_z" in out.columns
         np.testing.assert_array_almost_equal(out["u_g"], [1.0, 1.0])
         np.testing.assert_array_almost_equal(out["g_r"], [1.0, 1.0])
+
+    def test_adds_interaction_features(self):
+        X = pd.DataFrame(
+            {
+                "u": [20.0, 21.0],
+                "g": [19.0, 20.0],
+                "r": [18.0, 19.0],
+                "i": [17.0, 18.0],
+                "z": [16.0, 17.0],
+                "redshift": [0.1, 0.2],
+            }
+        )
+        engineer = ColorFeatureEngineer(
+            interaction_pairs=[("redshift", "u_g"), ("u_g", "g_r")],
+        )
+        out = engineer.fit_transform(X)
+        assert "redshift_x_u_g" in out.columns
+        assert "u_g_x_g_r" in out.columns
+        np.testing.assert_array_almost_equal(out["redshift_x_u_g"], [0.1, 0.2])
+        np.testing.assert_array_almost_equal(out["u_g_x_g_r"], [1.0, 1.0])
+
+    def test_invalid_interaction_pair_dropped(self):
+        X = pd.DataFrame(
+            {
+                "u": [20.0, 21.0],
+                "g": [19.0, 20.0],
+                "r": [18.0, 19.0],
+                "i": [17.0, 18.0],
+                "z": [16.0, 17.0],
+            }
+        )
+        engineer = ColorFeatureEngineer(
+            interaction_pairs=[("redshift", "u_g"), ("u_g", "g_r")],
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            out = engineer.fit_transform(X)
+        assert "redshift_x_u_g" not in out.columns
+        assert "u_g_x_g_r" in out.columns
 
     def test_consistent_columns_train_test(self):
         train = pd.DataFrame(

@@ -58,7 +58,12 @@ def main() -> None:
     # -- 1. Load data --------------------------------------------------
     logger.info("[1/5] Loading data ...")
     t0 = time.time()
-    train, test = load_data(cfg["paths"]["data"])
+    data_cfg = cfg.get("data", {})
+    train, test = load_data(
+        cfg["paths"]["data"],
+        augment_path=data_cfg.get("augment_path"),
+        dedup_cols=data_cfg.get("dedup_cols"),
+    )
     logger.info("  Train: %s  Test: %s  (%.1fs)", train.shape, test.shape, time.time() - t0)
 
     # -- 2. Separate target from features ------------------------------
@@ -76,6 +81,7 @@ def main() -> None:
         color_pairs=[tuple(p) for p in feat_cfg["color_pairs"]],
         cat_cols=feat_cfg.get("cat_cols"),
         encoding=feat_cfg.get("encoding", "ohe"),
+        interaction_pairs=[tuple(p) for p in feat_cfg.get("interaction_pairs", [])],
     )
     X_train = engineer.fit_transform(X_train)
     X_test = engineer.transform(X_test)

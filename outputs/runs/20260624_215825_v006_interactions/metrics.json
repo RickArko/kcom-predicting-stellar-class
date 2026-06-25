@@ -1,0 +1,16 @@
+{
+  "elapsed_seconds": 174.05,
+  "params": {
+    "cv_n_splits": 3,
+    "n_base_models": 3
+  },
+  "metrics": {
+    "valid_scores": [
+      0.9516,
+      0.9513,
+      0.9517
+    ],
+    "overall_oof_score": 0.9524,
+    "n_features": 25
+  }
+}

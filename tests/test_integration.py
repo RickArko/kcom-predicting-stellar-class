@@ -69,6 +69,24 @@ class TestPipeline:
         assert len(X_test) == len(test)
         assert X_train.columns.tolist() == X_test.columns.tolist()
 
+    def test_interaction_features(self, synthetic_data):
+        train, test = synthetic_data
+        engineer = ColorFeatureEngineer(
+            interaction_pairs=[
+                ("redshift", "u_g"),
+                ("redshift", "g_r"),
+                ("u_g", "g_r"),
+            ],
+        )
+        X_train = engineer.fit_transform(train.drop(columns=["class"]))
+        X_test = engineer.transform(test)
+
+        assert "redshift_x_u_g" in X_train.columns
+        assert "redshift_x_g_r" in X_train.columns
+        assert "u_g_x_g_r" in X_train.columns
+        assert "redshift_x_u_g" in X_test.columns
+        assert X_train.columns.tolist() == X_test.columns.tolist()
+
     def test_ensemble_learns_from_data(self, synthetic_data):
         train, test = synthetic_data
         engineer = ColorFeatureEngineer()

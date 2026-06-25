@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
@@ -40,6 +42,12 @@ class ColorFeatureEngineer(BaseEstimator, TransformerMixin):
         ``"ohe"`` (default) — one-hot encode via ``OneHotEncoder``.
         ``"label"`` — ordinal label encode via ``LabelEncoder``.
         ``"passthrough"`` — keep raw string values unchanged.
+    interaction_pairs:
+        Pairs of column names to multiply as interaction features.  Each
+        entry is ``(col_a, col_b)`` producing a column ``"{a}_x_{b}"``.
+        A pair is valid if both names survive *drop_cols* or are produced
+        by *color_pairs* (e.g. ``"u_g"``).  Invalid pairs are dropped with
+        a warning.  Created after colour indices and before encoding.
     """
 
     def __init__(
@@ -48,17 +56,33 @@ class ColorFeatureEngineer(BaseEstimator, TransformerMixin):
         color_pairs: list[tuple[str, str]] | None = None,
         cat_cols: list[str] | None = None,
         encoding: str = "ohe",
+        interaction_pairs: list[tuple[str, str]] | None = None,
     ):
         self.drop_cols = drop_cols or _DEFAULT_DROP
         self.color_pairs = color_pairs or _DEFAULT_COLOR_PAIRS
         self.cat_cols = cat_cols
         self.encoding = encoding
+        self.interaction_pairs = interaction_pairs
 
     def fit(self, X: pd.DataFrame, y=None) -> ColorFeatureEngineer:
         self._drop_cols_ = [c for c in self.drop_cols if c in X.columns]
         self._color_pairs_ = [
             (a, b) for a, b in self.color_pairs if a in X.columns and b in X.columns
         ]
+
+        available = {c for c in X.columns if c not in self._drop_cols_}
+        available |= {f"{a}_{b}" for a, b in self._color_pairs_}
+        self._interaction_pairs_ = []
+        for a, b in self.interaction_pairs or []:
+            if a in available and b in available:
+                self._interaction_pairs_.append((a, b))
+            else:
+                warnings.warn(
+                    f"interaction_pair ({a!r}, {b!r}) references unknown or "
+                    f"dropped columns — skipping.",
+                    stacklevel=2,
+                )
+
         if self.cat_cols is not None:
             self._cat_cols_ = [c for c in self.cat_cols if c in X.columns]
         else:
@@ -90,6 +114,8 @@ class ColorFeatureEngineer(BaseEstimator, TransformerMixin):
         X = X.drop(columns=self._drop_cols_, errors="ignore")
         for a, b in self._color_pairs_:
             X[f"{a}_{b}"] = X[a] - X[b]
+        for a, b in self._interaction_pairs_:
+            X[f"{a}_x_{b}"] = X[a] * X[b]
 
         if self.encoding == "ohe":
             for c in self._cat_cols_:

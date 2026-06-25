@@ -68,6 +68,7 @@ def main() -> None:
         color_pairs=[tuple(p) for p in feat_cfg["color_pairs"]],
         cat_cols=feat_cfg.get("cat_cols"),
         encoding=feat_cfg.get("encoding", "ohe"),
+        interaction_pairs=[tuple(p) for p in feat_cfg.get("interaction_pairs", [])],
     )
     engineer.fit(train.drop(columns=[target_col]))
     X_test = engineer.transform(test.copy())
