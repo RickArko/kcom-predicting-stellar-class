@@ -5,10 +5,39 @@ from pathlib import Path
 import joblib
 import numpy as np
 import pandas as pd
-from sklearn.base import clone
+from sklearn.base import BaseEstimator, ClassifierMixin, clone
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import balanced_accuracy_score
 from sklearn.preprocessing import LabelEncoder
+
+
+class SimpleAverageMeta(BaseEstimator, ClassifierMixin):
+    """Meta-model that averages base-model probabilities and takes argmax.
+
+    No learning — just reshapes the stacked probabilities back to
+    ``(n_models, n_samples, n_classes)``, averages across models, and
+    returns the argmax.  Useful as a baseline to check whether the
+    LogisticRegression meta-model is overfitting the OOF probabilities.
+    """
+
+    def __init__(self):
+        pass
+
+    def fit(self, X, y):
+        self.classes_ = np.unique(y)
+        self.n_models_ = X.shape[1] // len(self.classes_)
+        return self
+
+    def predict(self, X):
+        n_classes = len(self.classes_)
+        reshaped = X.reshape(X.shape[0], self.n_models_, n_classes)
+        avg = reshaped.mean(axis=1)
+        return np.argmax(avg, axis=1)
+
+    def predict_proba(self, X):
+        n_classes = len(self.classes_)
+        reshaped = X.reshape(X.shape[0], self.n_models_, n_classes)
+        return reshaped.mean(axis=1)
 
 
 class StackingEnsemble:
@@ -114,6 +143,8 @@ class StackingEnsemble:
             self.valid_scores_.append(score)
 
         oof_meta = np.hstack([oof_probas[n] for n, _ in self.base_models])
+        self.oof_meta_ = oof_meta
+        self.y_enc_ = y_enc
         self.meta_model_ = clone(self.meta_model)
         self.meta_model_.fit(oof_meta, y_enc)
 
@@ -126,6 +157,39 @@ class StackingEnsemble:
             self.test_meta_ = None
 
         return self
+
+    def tune_thresholds(self) -> float:
+        """Tune per-class score multipliers on OOF meta-probabilities.
+
+        Optimises balanced accuracy by scaling each class's meta-probability
+        column-group by a multiplier, then taking argmax.  Uses Nelder-Mead
+        simplex search.  Stores the multipliers in ``self.thresholds_`` and
+        updates ``self.overall_oof_score_``.
+
+        Returns
+        -------
+        The tuned balanced accuracy score on OOF.
+        """
+        from scipy.optimize import minimize
+
+        n_models = len(self.base_models)
+        n_classes = self.n_classes_
+        oof = self.oof_meta_
+        y_enc = self.y_enc_
+
+        reshaped = oof.reshape(oof.shape[0], n_models, n_classes)
+        avg_proba = reshaped.mean(axis=1)
+
+        def neg_balanced_acc(multipliers):
+            scores = avg_proba * multipliers[np.newaxis, :]
+            preds = np.argmax(scores, axis=1)
+            return -balanced_accuracy_score(y_enc, preds)
+
+        x0 = np.ones(n_classes)
+        result = minimize(neg_balanced_acc, x0, method="Nelder-Mead")
+        self.thresholds_ = result.x
+        self.overall_oof_score_ = -result.fun
+        return -result.fun
 
     def predict(self, X: pd.DataFrame) -> np.ndarray:
         """Predict class labels for new data.
@@ -151,6 +215,34 @@ class StackingEnsemble:
 
         test_meta = np.hstack([test_probas[n] for n, _ in self.base_models])
         preds_enc = self.meta_model_.predict(test_meta)
+        return self.label_encoder_.inverse_transform(preds_enc)
+
+    def predict_with_thresholds(self, X: pd.DataFrame) -> np.ndarray:
+        """Predict using tuned per-class thresholds instead of the meta-model.
+
+        Averages base-model probabilities across folds and models, applies
+        ``self.thresholds_`` multipliers, and takes argmax.  Must be called
+        after ``tune_thresholds()``.
+
+        Returns
+        -------
+        1-D array of string class labels.
+        """
+        n = len(X)
+        n_folds = len(self.fold_models_)
+        n_classes = self.n_classes_
+
+        test_probas: dict[str, np.ndarray] = {
+            name: np.zeros((n, n_classes)) for name, _ in self.base_models
+        }
+        for fold_models in self.fold_models_:
+            for name, _ in self.base_models:
+                test_probas[name] += fold_models[name].predict_proba(X) / n_folds
+
+        avg_proba = np.hstack([test_probas[n] for n, _ in self.base_models])
+        avg_proba = avg_proba.reshape(n, len(self.base_models), n_classes).mean(axis=1)
+        scores = avg_proba * self.thresholds_[np.newaxis, :]
+        preds_enc = np.argmax(scores, axis=1)
         return self.label_encoder_.inverse_transform(preds_enc)
 
     def save(self, path: str | Path) -> None:

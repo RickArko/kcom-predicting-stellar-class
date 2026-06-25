@@ -64,7 +64,7 @@ submit:
 	KAGGLE_API_TOKEN="$$TOKEN" uv run kaggle competitions submit \
 		-c $(COMPETITION) \
 		-f $(SUBMISSION_FILE) \
-		-m $(SUBMISSION_MSG) && \
+		-m "$(SUBMISSION_MSG)" && \
 	echo "" && \
 	echo "✓ Submitted! Checking leaderboard..." && \
 	KAGGLE_API_TOKEN="$$TOKEN" uv run kaggle competitions leaderboard \

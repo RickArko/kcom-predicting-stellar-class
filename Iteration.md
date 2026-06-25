@@ -232,6 +232,72 @@ To properly test LGBM native categoricals, convert columns to
 
 ---
 
+### v006 — Interaction features
+
+**Hypothesis:** Domain-motivated interaction features (`redshift × colour`,
+colour × colour) would surface class-separating structure that individual
+features miss.
+
+**Change:** Added `interaction_pairs` parameter to `ColorFeatureEngineer`
+(`src/stellar/features.py`).  Config at
+`config/experiments/v006_interactions.yaml` — v001 OHE config plus 7
+interaction pairs (4 `redshift × colour`, 3 `colour × colour`).
+
+```
+run:    v006_interactions
+oof:    0.9524  (-0.0002 vs benchmark)
+cv:     0.9515  (+0.0006 — best mean CV of all runs)
+feats:  25      (+7 interaction columns)
+time:   174s
+```
+
+**Takeaway:** Interactions improved per-fold CV (0.9509 → 0.9515, best of all
+runs) but the stacked OOF dropped.  The LogisticRegression meta-model is the
+bottleneck — it can't leverage the richer base-model probabilities.  See
+`docs/experiments/interactions.md`.
+
+---
+
+### v007 — Original-data augmentation
+
+**Hypothesis:** Augmenting the 577k synthetic training rows with 100k rows
+from the original SDSS17 dataset would add real-world signal lost in the
+synthetic generation process.
+
+**Change:** Extended `load_data()` (`src/stellar/data.py`) with `augment_path`
+and `dedup_cols` params.  Downloaded
+`fedesoriano/stellar-classification-dataset-sdss17` to `data/original.csv`.
+The original lacks `spectral_type` and `galaxy_population`, so both v007
+configs drop categoricals (clean single-axis test).  Both include the v006
+interaction features.  Configs at `config/experiments/v007_no_augment.yaml`
+and `config/experiments/v007_augment.yaml`.
+
+```
+run:    v007_no_augment
+oof:    0.9528  (+0.0002 vs benchmark)
+feats:  19
+time:   157s
+
+run:    v007_augment
+oof:    0.9532  (+0.0006 vs benchmark — new best)
+feats:  19
+train:  677,347  (577k synthetic + 100k original, 0 deduped)
+time:   156s
+```
+
+**Surprise:** Dropping categoricals + adding interactions (v007_no_augment,
+0.9528) beat OHE categoricals alone (v001, 0.9526).  In v006, interactions
+combined with OHE categoricals hurt (0.9524).  The OHE columns interfere with
+interaction features in the meta-model — dropping them lets the interaction
+signal propagate cleanly.
+
+**Takeaway:** Augmentation helps but far less than expected (+0.0004, not
++0.01–0.03).  The synthetic data already subsumes most of the original's
+signal.  Still, v007_augment is the new best at 0.9532.  See
+`docs/experiments/original_data_augmentation.md`.
+
+---
+
 ### Summary
 
 | Run | OOF | Features | Time | Delta |
@@ -242,13 +308,20 @@ To properly test LGBM native categoricals, convert columns to
 | v003 (label encode) | 0.9524 | 14 | 145s | +0.0003 |
 | v004 (CB native) | 0.9525 | 14 | 210s | +0.0004 |
 | v005 (LGB native)* | 0.9524 | 14 | 135s | +0.0003 |
+| v006 (interactions) | 0.9524 | 25 | 174s | +0.0003 |
+| v007_no_augment | 0.9528 | 19 | 157s | +0.0007 |
+| **v007_augment** | **0.9532** | 19 | 156s | **+0.0011** |
 
-*Param ignored by LGBM ≥4.6 — effectively v003.
+*v005 param ignored by LGBM ≥4.6 — effectively v003.
 
-All strategies that keep categoricals cluster at 0.9524–0.9526.  **OHE remains
-the simplest and marginally best choice.**  Diminishing returns are severe at
-this level — expect single basis points at most from further categorical
-tuning.  See `docs/experiments/categoricals.md` for the full report.
+**Current best:** v007_augment at OOF 0.9532 — drops categoricals, adds 7
+interaction features, augments with 100k original SDSS17 rows.  Use
+`config/experiments/v007_augment.yaml` as the baseline for future experiments.
+
+Key findings from v006–v007:
+- **Interactions help without categoricals** (0.9521 → 0.9528) but hurt with
+  OHE categoricals (0.9526 → 0.9524).  The meta-model is the bottleneck.
+- **Original-data augmentation adds +0.0004** — modest but free at inference.
 
 ---
 
@@ -293,28 +366,33 @@ make submit SUBMISSION_FILE=outputs/runs/20260624_131300_baseline/submission.csv
 
 ### Likely to help
 
-- **CatBoost with native categoricals** — currently one-hot encoding is applied
-  uniformly; CatBoost handles raw categoricals natively, and LGBM has a
-  `categorical_feature` parameter.  A per-model `cat_cols` pass-through could
-  improve over generic OHE.
-- **Interaction features** — `redshift × colour_index` or
-  `redshift × spectral_type` could surface class-separating structure that
-  individual features miss.
-- **Target encoding** — encode `spectral_type` by its per-class probability
-  (with CV to avoid leakage) instead of one-hot.
-- **Feature selection** — LGBM/XGB feature importance can identify which of
-  the 6 OHE columns carry weight; drop the low-signal ones.
+- **Meta-model variants** — two experiments (v002, v006) now show per-fold CV
+  improvements that fail to propagate through the LogisticRegression stack.
+  Try a simple average, shallow tree blender, or weighted mean of base-model
+  probabilities instead of logistic regression.
+- **Per-class threshold tuning** — simplex search on OOF meta-probabilities
+  to maximize balanced accuracy (direct lever on the metric).  Low effort.
+- **5-fold CV + 1000 estimators** — re-run v007_augment with
+  `config/config.yaml` settings for the final submission.  Better OOF
+  estimates and test predictions.
+- **Feature selection** — LGBM/XGB feature importance can identify which
+  interaction features carry weight; drop the low-signal ones.
 
 ### Worth trying
 
-- **LightGBM native categorical support** — pass `categorical_feature` in the
-  config instead of OHE.
-- **5-fold CV** — 3-fold was used for iteration speed; final runs should use
-  5-fold for better OOF estimates and test predictions.
-- **Stacking meta-model variants** — try a simple neural net or a shallow tree
-  as the blender instead of logistic regression.
-- **Post-processing** — calibrate probabilities with Platt scaling or isotonic
-  regression before the final argmax.
+- **More base-model diversity + seed bags** — ExtraTrees, HistGBM, 3-seed
+  LGBM for a more robust ensemble.
+- **Pseudo-labeling** — use confident test predictions as extra training rows.
+- **Adversarial validation** — train/test shift diagnostic to protect
+  leaderboard trust.
+
+### Completed / dead ends
+
+- ~~Categorical encoding~~ — OHE/label/native all cluster at 0.9524–0.9526.
+  Dropping categoricals + interactions (v007) is better than keeping them.
+- ~~Interaction features with OHE categoricals~~ — hurt the stack (v006).
+  Use interactions only when categoricals are dropped (v007).
+- ~~HP tuning~~ — v002 showed per-fold gains don't propagate through the stack.
 
 ### Architecture notes
 
