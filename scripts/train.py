@@ -75,7 +75,6 @@ def main() -> None:
         drop_cols=feat_cfg["drop_cols"],
         color_pairs=[tuple(p) for p in feat_cfg["color_pairs"]],
         cat_cols=feat_cfg.get("cat_cols"),
-        encoding=feat_cfg.get("encoding", "ohe"),
     )
     X_train = engineer.fit_transform(X_train)
     X_test = engineer.transform(X_test)
@@ -90,33 +89,21 @@ def main() -> None:
     )
 
     # -- 5. Build ensemble ---------------------------------------------
-    lgbm_cfg = cfg["lgbm"].copy()
-    xgb_cfg = cfg["xgb"].copy()
-    catboost_cfg = cfg["catboost"].copy()
-
-    catboost_fit_kwargs = {}
-    if "cat_features" in catboost_cfg:
-        catboost_fit_kwargs["cat_features"] = catboost_cfg.pop("cat_features")
-
     base_models = [
-        ("lgbm", LGBMClassifier(**lgbm_cfg)),
-        ("xgb", XGBClassifier(**xgb_cfg)),
-        ("catboost", CatBoostClassifier(**catboost_cfg)),
+        ("lgbm", LGBMClassifier(**cfg["lgbm"])),
+        ("xgb", XGBClassifier(**cfg["xgb"])),
+        ("catboost", CatBoostClassifier(**cfg["catboost"])),
     ]
     meta_params = cfg.get("meta", {"max_iter": 1000, "random_state": 42})
     meta_model = LogisticRegression(**meta_params)
     ensemble = StackingEnsemble(base_models, meta_model)
-
-    model_fit_kwargs: dict[str, dict] = {}
-    if catboost_fit_kwargs:
-        model_fit_kwargs["catboost"] = catboost_fit_kwargs
 
     # -- 6. Train with tracking ----------------------------------------
     logger.info("[3/5] Training with %d-fold CV ...", cv_cfg["n_splits"])
     t0 = time.time()
 
     with track_experiment(cfg, run_name=args.run_name) as run:
-        ensemble.fit(X_train, y_train, cv, X_test, model_fit_kwargs=model_fit_kwargs)
+        ensemble.fit(X_train, y_train, cv, X_test)
 
         run.log_metrics(
             {

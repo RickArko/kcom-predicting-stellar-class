@@ -66,8 +66,6 @@ def main() -> None:
     engineer = ColorFeatureEngineer(
         drop_cols=feat_cfg["drop_cols"],
         color_pairs=[tuple(p) for p in feat_cfg["color_pairs"]],
-        cat_cols=feat_cfg.get("cat_cols"),
-        encoding=feat_cfg.get("encoding", "ohe"),
     )
     engineer.fit(train.drop(columns=[target_col]))
     X_test = engineer.transform(test.copy())
