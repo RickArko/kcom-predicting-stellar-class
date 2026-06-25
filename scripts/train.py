@@ -20,7 +20,7 @@ from xgboost import XGBClassifier
 
 from stellar.data import load_config, load_data
 from stellar.features import ColorFeatureEngineer
-from stellar.models import StackingEnsemble, save_submission
+from stellar.models import SimpleAverageMeta, StackingEnsemble, save_submission
 from stellar.tracking import track_experiment
 
 logging.basicConfig(
@@ -109,8 +109,16 @@ def main() -> None:
         ("xgb", XGBClassifier(**xgb_cfg)),
         ("catboost", CatBoostClassifier(**catboost_cfg)),
     ]
-    meta_params = cfg.get("meta", {"max_iter": 1000, "random_state": 42})
-    meta_model = LogisticRegression(**meta_params)
+    meta_params = cfg.get("meta", {}).copy()
+    meta_type = meta_params.pop("model", "logistic_regression")
+    tune_thresholds = meta_params.pop("tune_thresholds", False)
+
+    if meta_type == "simple_average":
+        meta_model = SimpleAverageMeta()
+    else:
+        meta_params.setdefault("max_iter", 1000)
+        meta_params.setdefault("random_state", 42)
+        meta_model = LogisticRegression(**meta_params)
     ensemble = StackingEnsemble(base_models, meta_model)
 
     model_fit_kwargs: dict[str, dict] = {}
@@ -124,6 +132,10 @@ def main() -> None:
     with track_experiment(cfg, run_name=args.run_name) as run:
         ensemble.fit(X_train, y_train, cv, X_test, model_fit_kwargs=model_fit_kwargs)
 
+        if tune_thresholds:
+            tuned_score = ensemble.tune_thresholds()
+            logger.info("  Threshold-tuned OOF balanced accuracy: %.4f", tuned_score)
+
         run.log_metrics(
             {
                 "valid_scores": [round(s, 4) for s in ensemble.valid_scores_],
@@ -135,6 +147,8 @@ def main() -> None:
             {
                 "cv_n_splits": cv_cfg["n_splits"],
                 "n_base_models": len(base_models),
+                "meta_model": meta_type,
+                "tune_thresholds": tune_thresholds,
             }
         )
 
@@ -145,7 +159,10 @@ def main() -> None:
 
         # Generate & save submission (run-specific + canonical)
         logger.info("[4/5] Generating predictions ...")
-        test_preds = ensemble.predict(X_test)
+        if tune_thresholds:
+            test_preds = ensemble.predict_with_thresholds(X_test)
+        else:
+            test_preds = ensemble.predict(X_test)
         save_submission(test["id"], test_preds, str(run.submission_path))
         logger.info("  Submission saved to %s", run.submission_path)
 

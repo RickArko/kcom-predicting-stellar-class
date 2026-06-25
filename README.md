@@ -128,3 +128,32 @@ flowchart TD
 2. **Base Models** — LightGBM, XGBoost, CatBoost trained with stratified 5-fold cross-validation
 3. **Stacking** — Logistic Regression meta-model on out-of-fold probability predictions
 4. **Evaluation** — Balanced accuracy (competition metric)
+
+
+
+### Beat the Benchmark
+
+```bash
+# Download the original SDSS17 dataset for augmentation
+uv run kaggle datasets download -d fedesoriano/stellar-classification-dataset-sdss17 -p data/
+unzip -o data/stellar-classification-dataset-sdss17.zip -d data/
+mv data/star_classification.csv data/original.csv
+rm data/stellar-classification-dataset-sdss17.zip
+
+# Train the final model (~22 min on CPU)
+make train CONFIG=config/experiments/final.yaml RUN_NAME=final
+
+# Compare against all prior experiments
+uv run python scripts/compare.py
+
+# Submit to the public leaderboard
+make submit SUBMISSION_FILE=outputs/runs/<timestamp>_final/submission.csv \
+           SUBMISSION_MSG="final: augment + interactions + 5-fold/1000 + threshold tuning (OOF 0.9641)"
+```
+
+The canonical submission is also at `outputs/submissions/submission.csv` after
+training. To re-predict without retraining:
+
+```bash
+uv run python scripts/predict.py --run-dir outputs/runs/<timestamp>_final
+```

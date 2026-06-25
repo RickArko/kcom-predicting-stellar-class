@@ -1,0 +1,20 @@
+{
+  "elapsed_seconds": 1301.65,
+  "params": {
+    "cv_n_splits": 5,
+    "n_base_models": 3,
+    "meta_model": "simple_average",
+    "tune_thresholds": true
+  },
+  "metrics": {
+    "valid_scores": [
+      0.9559,
+      0.9554,
+      0.9563,
+      0.9572,
+      0.9561
+    ],
+    "overall_oof_score": 0.9641,
+    "n_features": 19
+  }
+}
