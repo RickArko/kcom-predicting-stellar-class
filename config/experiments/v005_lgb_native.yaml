@@ -1,0 +1,81 @@
+competition:
+  name: playground-series-s6e6
+  url: https://www.kaggle.com/competitions/playground-series-s6e6
+  metric: balanced_accuracy
+  target: class
+  classes:
+    - GALAXY
+    - STAR
+    - QSO
+
+paths:
+  data: data/
+  outputs: outputs/
+  submissions: outputs/submissions/
+  models: models/
+
+features:
+  drop_cols:
+    - id
+    - obj_ID
+    - run_ID
+    - rerun_ID
+    - cam_col
+    - field_ID
+    - spec_obj_ID
+    - fiber_ID
+    - plate
+    - MJD
+  color_pairs:
+    - [u, g]
+    - [g, r]
+    - [r, i]
+    - [i, z]
+  cat_cols:
+    - spectral_type
+    - galaxy_population
+  encoding: label
+
+cv:
+  n_splits: 3
+  shuffle: true
+  random_state: 42
+
+lgbm:
+  n_estimators: 250
+  learning_rate: 0.05
+  num_leaves: 63
+  max_depth: -1
+  min_child_samples: 20
+  subsample: 0.8
+  colsample_bytree: 0.8
+  reg_alpha: 0.1
+  reg_lambda: 0.1
+  random_state: 42
+  n_jobs: -1
+  verbose: -1
+  categorical_feature: [8, 9]
+
+xgb:
+  n_estimators: 250
+  learning_rate: 0.05
+  max_depth: 6
+  subsample: 0.8
+  colsample_bytree: 0.8
+  reg_alpha: 0.1
+  reg_lambda: 1.0
+  eval_metric: mlogloss
+  random_state: 42
+  n_jobs: -1
+
+catboost:
+  iterations: 250
+  learning_rate: 0.05
+  depth: 6
+  l2_leaf_reg: 3
+  random_seed: 42
+  verbose: 0
+
+meta:
+  max_iter: 1000
+  random_state: 42
