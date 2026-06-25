@@ -112,6 +112,75 @@ def fetch_kaggle_submissions(competition: str) -> list[dict]:
     return rows
 
 
+def fetch_leaderboard_percentiles(competition: str) -> dict[str, float]:
+    """Download the full public leaderboard and compute percentile cutoffs.
+
+    Returns a dict like {"p10": 0.944, "p50": 0.964, "p75": 0.968, "n_teams": 2398}.
+    Returns an empty dict if the download fails.
+    """
+    import subprocess
+    import tempfile
+    import zipfile
+
+    token = _get_token()
+    if not token:
+        return {}
+
+    env = {**os.environ, "KAGGLE_API_TOKEN": token}
+    with tempfile.TemporaryDirectory() as tmpdir:
+        result = subprocess.run(
+            [
+                "uv",
+                "run",
+                "kaggle",
+                "competitions",
+                "leaderboard",
+                "-c",
+                competition,
+                "--download",
+                "-p",
+                tmpdir,
+                "-q",
+            ],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=120,
+        )
+        if result.returncode != 0:
+            logger.warning("Leaderboard download failed: %s", result.stderr.strip())
+            return {}
+
+        zips = list(Path(tmpdir).glob("*.zip"))
+        if not zips:
+            logger.warning("No leaderboard zip found.")
+            return {}
+
+        with zipfile.ZipFile(zips[0]) as zf:
+            csv_name = [n for n in zf.namelist() if n.endswith(".csv")][0]
+            with zf.open(csv_name) as f:
+                reader = csv.DictReader(io.TextIOWrapper(f))
+                scores = sorted([float(r["Score"]) for r in reader], reverse=True)
+
+    if not scores:
+        return {}
+
+    n = len(scores)
+    arr = np.array(scores)
+    pct = {
+        "p10": float(np.percentile(arr, 10)),
+        "p25": float(np.percentile(arr, 25)),
+        "p50": float(np.percentile(arr, 50)),
+        "p75": float(np.percentile(arr, 75)),
+        "p90": float(np.percentile(arr, 90)),
+        "n_teams": n,
+    }
+    logger.info("  Leaderboard: %d teams", n)
+    for k in ("p10", "p25", "p50", "p75", "p90"):
+        logger.info("    %s: %.5f", k, pct[k])
+    return pct
+
+
 def _parse_score(s: str) -> float | None:
     s = s.strip()
     if not s:
@@ -224,8 +293,16 @@ def build_chart_data(
     return chart[:max_bars]
 
 
-def render_chart(chart: list[dict], output: str) -> None:
-    """Render a grouped bar chart of OOF / public / private scores."""
+def render_chart(
+    chart: list[dict],
+    output: str,
+    percentiles: dict[str, float] | None = None,
+) -> None:
+    """Render a grouped bar chart of OOF / public / private scores.
+
+    If *percentiles* is provided, draws dashed horizontal reference lines for
+    the public leaderboard percentile cutoffs.
+    """
     out = Path(output)
     out.parent.mkdir(parents=True, exist_ok=True)
 
@@ -238,7 +315,7 @@ def render_chart(chart: list[dict], output: str) -> None:
     has_public = any(r["public"] is not None for r in chart)
     has_private = any(r["private"] is not None for r in chart)
 
-    fig, ax = plt.subplots(figsize=(max(8, n * 1.5), 5))
+    fig, ax = plt.subplots(figsize=(max(8, n * 1.5), 6))
 
     bars_added = []
     offset = 0
@@ -263,13 +340,54 @@ def render_chart(chart: list[dict], output: str) -> None:
         for k in ("oof", "public", "private"):
             if r[k] is not None:
                 all_vals.append(r[k])
+    if percentiles:
+        all_vals.extend(v for k, v in percentiles.items() if k != "n_teams")
     if all_vals:
         ymin = min(all_vals) - 0.005
         ymax = max(all_vals) + 0.005
         ax.set_ylim(ymin, ymax)
 
+    pct_colors = {
+        "p10": "#DD8452",
+        "p25": "#DD8452",
+        "p50": "#8172B3",
+        "p75": "#8172B3",
+        "p90": "#DA8BC3",
+    }
+    pct_labels = {
+        "p10": "10th pct",
+        "p25": "25th pct",
+        "p50": "Median",
+        "p75": "75th pct",
+        "p90": "90th pct",
+    }
+    if percentiles:
+        x_max = n - 0.5
+        for key, val in percentiles.items():
+            if key == "n_teams":
+                continue
+            ax.axhline(
+                y=val,
+                color=pct_colors.get(key, "#999"),
+                linestyle="--",
+                linewidth=0.9,
+                alpha=0.7,
+            )
+            ax.text(
+                x_max + 0.02,
+                val,
+                f" {pct_labels.get(key, key)}: {val:.4f}",
+                va="center",
+                fontsize=7,
+                color=pct_colors.get(key, "#999"),
+            )
+        n_teams = percentiles.get("n_teams", 0)
+        title_suffix = f"  ({n_teams:,} teams)"
+    else:
+        title_suffix = ""
+
     ax.set_ylabel("Balanced Accuracy")
-    ax.set_title("Submission Performance — CV vs Leaderboard")
+    ax.set_title(f"Submission Performance — CV vs Leaderboard{title_suffix}")
     ax.set_xticks(x + width * (offset - 1) / 2)
     ax.set_xticklabels(labels, rotation=30, ha="right")
     ax.legend(loc="lower right")
@@ -290,7 +408,7 @@ def render_chart(chart: list[dict], output: str) -> None:
                 )
 
     fig.tight_layout()
-    fig.savefig(out, dpi=150)
+    fig.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(fig)
     logger.info("Chart saved to %s", out)
 
@@ -303,10 +421,14 @@ def main() -> None:
     logger.info("  Found %d runs with OOF scores", len(runs))
 
     submissions = []
+    percentiles = {}
     if not args.no_kaggle:
         logger.info("Fetching Kaggle submissions ...")
         submissions = fetch_kaggle_submissions(args.competition)
         logger.info("  Found %d submissions", len(submissions))
+
+        logger.info("Fetching leaderboard percentiles ...")
+        percentiles = fetch_leaderboard_percentiles(args.competition)
 
     chart = build_chart_data(runs, submissions)
     if not chart:
@@ -314,7 +436,7 @@ def main() -> None:
         return
 
     logger.info("Rendering chart with %d bars ...", len(chart))
-    render_chart(chart, args.output)
+    render_chart(chart, args.output, percentiles=percentiles or None)
 
 
 if __name__ == "__main__":

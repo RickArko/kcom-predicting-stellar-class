@@ -12,6 +12,16 @@ Classify SDSS astronomical objects as **GALAXY**, **STAR**, or **QSO**.
 | benchmark (v001) | 0.9526 | 0.9544 | — |
 | **final** (augment + interactions + 5-fold/1000 + threshold tuning) | **0.9641** | **0.9640** | — |
 
+**Leaderboard context** (2,398 teams on public LB):
+
+| Percentile | Score | My rank |
+|---|---|---|
+| 10th | 0.9448 | — |
+| 25th | 0.9548 | benchmark ~25th pct |
+| **50th (median)** | **0.9637** | **final ~49th pct (rank ~1,181)** |
+| 75th | 0.9676 | — |
+| 90th | 0.9714 | — |
+
 Private LB populates after the competition ends. Regenerate after new submissions:
 
 ```bash
