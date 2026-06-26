@@ -52,6 +52,13 @@ All five improvements combined in [`config/experiments/final.yaml`](config/exper
 make train CONFIG=config/experiments/final.yaml RUN_NAME=v010_all
 ```
 
+**Then to submit the experiment for `leaderboard-score`:**
+
+```bash
+make submit SUBMISSION_FILE=outputs/runs/20260626_100637_v010_all/submission.csv \
+           SUBMISSION_MSG="v010_all: seeds+target_enc+poly+pseudo_label+calibrated"
+```
+
 ## Quick Start
 
 ```bash
