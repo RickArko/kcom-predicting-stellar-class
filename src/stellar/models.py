@@ -280,6 +280,98 @@ class StackingEnsemble:
         return joblib.load(path)
 
 
+def train_cv(
+    X_train: pd.DataFrame,
+    y_train: pd.Series,
+    X_test: pd.DataFrame,
+    n_splits: int = 5,
+    random_state: int = 42,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Train LGBM+XGB+CatBoost with stratified CV, return OOF meta + test preds.
+
+    Returns
+    -------
+    (oof_meta, test_preds)
+        oof_meta: shape ``(n_train, n_models * n_classes)`` – stacked OOF
+        probabilities from each base model on each CV fold.
+        test_preds: 1-D array of string class labels (simple average across
+        base models and folds).
+    """
+    from catboost import CatBoostClassifier
+    from lightgbm import LGBMClassifier
+    from sklearn.model_selection import StratifiedKFold
+    from xgboost import XGBClassifier
+
+    le = LabelEncoder()
+    y_enc = le.fit_transform(y_train)
+    n_classes = len(le.classes_)
+    n_train = len(X_train)
+    n_test = len(X_test)
+
+    base_models: list[tuple[str, object]] = [
+        (
+            "lgbm",
+            LGBMClassifier(
+                n_estimators=500,
+                learning_rate=0.05,
+                num_leaves=63,
+                random_state=random_state,
+                n_jobs=-1,
+                verbose=-1,
+            ),
+        ),
+        (
+            "xgb",
+            XGBClassifier(
+                n_estimators=500,
+                learning_rate=0.05,
+                max_depth=6,
+                random_state=random_state,
+                n_jobs=-1,
+                eval_metric="mlogloss",
+            ),
+        ),
+        (
+            "catboost",
+            CatBoostClassifier(
+                iterations=500, learning_rate=0.05, depth=6, random_seed=random_state, verbose=0
+            ),
+        ),
+    ]
+
+    cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
+
+    oof_probas: dict[str, np.ndarray] = {
+        name: np.zeros((n_train, n_classes)) for name, _ in base_models
+    }
+    test_probas: dict[str, np.ndarray] = {
+        name: np.zeros((n_test, n_classes)) for name, _ in base_models
+    }
+
+    from tqdm.auto import tqdm
+
+    for train_idx, val_idx in tqdm(
+        cv.split(X_train, y_enc),
+        total=n_splits,
+        desc="CV fold",
+        unit="fold",
+    ):
+        X_tr, X_val = X_train.iloc[train_idx], X_train.iloc[val_idx]
+        y_tr = y_enc[train_idx]
+
+        for name, model in base_models:
+            m = clone(model)
+            m.fit(X_tr, y_tr)
+            oof_probas[name][val_idx] = m.predict_proba(X_val)
+            test_probas[name] += m.predict_proba(X_test) / n_splits
+
+    oof_meta = np.hstack([oof_probas[n] for n, _ in base_models])
+    avg_test = sum(test_probas[n] for n, _ in base_models) / len(base_models)
+    test_preds = le.inverse_transform(np.argmax(avg_test, axis=1))
+
+    return oof_meta, test_preds
+
+
 def save_submission(
     test_ids: pd.Series,
     predictions: np.ndarray,

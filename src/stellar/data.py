@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 import yaml
+from sklearn.preprocessing import LabelEncoder
 
 logger = logging.getLogger(__name__)
 
@@ -43,3 +44,18 @@ def load_data(
         )
 
     return train, test
+
+
+def encode_target(
+    y: pd.Series,
+) -> tuple[pd.Series, dict[str, int]]:
+    """Encode string class labels to integer Series.
+
+    Returns
+    -------
+    (y_encoded, label_map) where label_map is ``{class_name: int_code}``.
+    """
+    le = LabelEncoder()
+    y_enc = pd.Series(le.fit_transform(y), index=y.index, name=y.name)
+    label_map = dict(zip(le.classes_, le.transform(le.classes_)))
+    return y_enc, label_map

@@ -91,17 +91,41 @@ You must **join the competition** (Accept Rules) on the Kaggle page before `make
 ```mermaid
 flowchart TD
     A[Raw Data] --> B[Feature Engineering]
-    B --> C[drop ID/metadata cols]
-    B --> D[photometric color indices]
-    B --> E[u-g, g-r, r-i, i-z]
-    B --> F[interaction features]
-    E --> G[Stratified 5-Fold CV]
-    F --> G
-    G --> H[LightGBM + XGBoost + CatBoost]
-    H --> I[OOF Probabilities]
-    I --> J[Threshold Tuning]
-    J --> K[Final Predictions]
-    K --> L[submission.csv]
+    A --> AUG[SDSS17 Augmentation]
+
+    subgraph FE[Feature Engineering]
+        direction LR
+        B --> C[drop ID/metadata cols]
+        B --> D[photometric colour indices<br>u-g, g-r, r-i, i-z]
+        B --> R[band ratios<br>u/g, g/r, r/i, i/z]
+        B --> L[log transforms<br>log₁₀ redshift]
+        B --> P[poly features deg 2<br>u², u·g, …]
+        B --> I[interaction features<br>redshift × colour]
+        B --> ENC[encoding:<br>target / OHE / label]
+    end
+
+    FE --> G[Stratified 5-Fold CV]
+
+    subgraph SE[Seed Bagging — 9 Base Models]
+        direction LR
+        S1[LGBM s0] --- S2[LGBM s1] --- S3[LGBM s2]
+        S4[XGB s0] --- S5[XGB s1] --- S6[XGB s2]
+        S7[CB s0] --- S8[CB s1] --- S9[CB s2]
+    end
+
+    G --> SE
+
+    SE --> OOF[OOF Probabilities<br>per fold per model]
+    OOF --> META[Meta-Model<br>SimpleAverage / LogisticRegression<br>+ optional CalibratedClassifierCV]
+    OOF --> THRESH[Per-Class<br>Threshold Tuning<br>Nelder-Mead]
+    META --> FINAL[Final Predictions]
+    THRESH --> FINAL
+
+    FINAL --> PL{Pseudo-Label<br>confidence ≥ 0.95?}
+    PL -->|yes| AUG
+    PL -->|no| SUB[submission.csv]
+
+    AUG --> A
 ```
 
 - **Features** — drop metadata/ID, derive SDSS colour indices (`u-g, g-r, r-i, i-z`), add `redshift × colour` interactions
