@@ -9,6 +9,7 @@ from sklearn.base import BaseEstimator, ClassifierMixin, clone
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import balanced_accuracy_score
 from sklearn.preprocessing import LabelEncoder
+from tqdm.auto import tqdm
 
 
 class SimpleAverageMeta(BaseEstimator, ClassifierMixin):
@@ -120,7 +121,8 @@ class StackingEnsemble:
                 name: np.zeros((n_test, self.n_classes_)) for name, _ in self.base_models
             }
 
-        for fold, (train_idx, val_idx) in enumerate(cv.split(X, y_enc)):
+        fold_iter = list(enumerate(cv.split(X, y_enc)))
+        for fold, (train_idx, val_idx) in tqdm(fold_iter, desc="CV fold", unit="fold"):
             X_tr, X_val = X.iloc[train_idx], X.iloc[val_idx]
             y_tr, y_val = y_enc[train_idx], y_enc[val_idx]
 
@@ -347,8 +349,6 @@ def train_cv(
     test_probas: dict[str, np.ndarray] = {
         name: np.zeros((n_test, n_classes)) for name, _ in base_models
     }
-
-    from tqdm.auto import tqdm
 
     for train_idx, val_idx in tqdm(
         cv.split(X_train, y_enc),
