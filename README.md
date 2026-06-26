@@ -36,6 +36,22 @@ make visualize
 
 See [`Iteration.md`](Iteration.md) for the full experiment log and [`docs/experiments/`](docs/experiments/) for per-topic reports.
 
+## Submission
+
+All five improvements combined in [`config/experiments/final.yaml`](config/experiments/final.yaml), targeting **0.9714** (top 10%):
+
+| Technique | Where | Config key | Expected gain |
+|---|---|---|---|
+| **Seed averaging** | `train.py:_expand_seeds` | `lgbm.seeds: [42,43,44]` | +0.002–0.005 |
+| **Target encoding** | `features.py:137-153` | `encoding: target` | +0.001–0.003 |
+| **Feature transforms** | `features.py:52-64` | `ratio_pairs`, `log_transform_cols`, `poly_cols`/`polynomial_degree` | +0.001–0.003 |
+| **Calibrated meta** | `train.py:99-103` | `meta.calibrated: true` | +0.001–0.002 |
+| **Pseudo-labeling** | `train.py:_run_pseudo_labeling` | `pseudo_label: {enabled: true, confidence_threshold: 0.95}` | +0.005–0.015 |
+
+```bash
+make train CONFIG=config/experiments/final.yaml RUN_NAME=v010_all
+```
+
 ## Quick Start
 
 ```bash
@@ -162,3 +178,14 @@ tests/                     # unit + integration (synthetic SDSS-like data)
 docs/experiments/          # per-topic experiment reports
 outputs/runs/              # timestamped run artifacts (config, metrics, model, submission)
 ```
+
+## Submission
+
+Here's a one-liner per improvement:
+Technique	Where	Config key
+Seed averaging	train.py:_expand_seeds	lgbm.seeds: [42,43,44]
+Target encoding	features.py:137-153	encoding: target
+Feature transforms	features.py:52-64	ratio_pairs, log_transform_cols, poly_cols/polynomial_degree
+Calibrated meta	train.py:99-103	meta.calibrated: true
+Pseudo-labeling	train.py:_run_pseudo_labeling	pseudo_label: {enabled: true, confidence_threshold: 0.95}
+Combined in config/experiments/final.yaml targeting 0.9714 (top 10%). Run with:
