@@ -140,6 +140,101 @@ class TestColorFeatureEngineer:
         assert list(y_train) == ["GALAXY", "STAR"]
         assert "u_g" in X_train.columns
 
+    def test_target_encoding(self):
+        X = pd.DataFrame(
+            {
+                "spectral_type": ["A/F", "G/K", "A/F", "M", "O/B"],
+                "u": [20.0, 21.0, 22.0, 23.0, 24.0],
+                "g": [19.0, 20.0, 21.0, 22.0, 23.0],
+            }
+        )
+        y = pd.Series(["GALAXY", "STAR", "GALAXY", "QSO", "STAR"])
+        engineer = ColorFeatureEngineer(
+            drop_cols=[],
+            encoding="target",
+            cat_cols=["spectral_type"],
+        )
+        out = engineer.fit_transform(X, y)
+        assert "spectral_type" in out.columns
+        assert out["spectral_type"].dtype == np.float32
+        assert out.shape[1] == 4  # u, g, u_g, spectral_type (encoded)
+
+    def test_ratio_pairs(self):
+        X = pd.DataFrame({"u": [20.0, 21.0], "g": [19.0, 20.0]})
+        engineer = ColorFeatureEngineer(
+            drop_cols=[],
+            color_pairs=[],
+            cat_cols=[],
+            ratio_pairs=[("u", "g")],
+        )
+        out = engineer.fit_transform(X)
+        assert "u_g_ratio" in out.columns
+        np.testing.assert_array_almost_equal(out["u_g_ratio"], [20.0 / 19.0, 21.0 / 20.0])
+
+    def test_log_transform(self):
+        X = pd.DataFrame({"redshift": [0.1, 1.0, 10.0]})
+        engineer = ColorFeatureEngineer(
+            drop_cols=[],
+            color_pairs=[],
+            cat_cols=[],
+            log_transform_cols=["redshift"],
+        )
+        out = engineer.fit_transform(X)
+        assert "redshift_log" in out.columns
+        expected = np.log1p([0.1, 1.0, 10.0])
+        np.testing.assert_array_almost_equal(out["redshift_log"], expected)
+
+    def test_polynomial_features(self):
+        X = pd.DataFrame({"u": [1.0, 2.0], "g": [3.0, 4.0]})
+        engineer = ColorFeatureEngineer(
+            drop_cols=[],
+            color_pairs=[],
+            cat_cols=[],
+            poly_cols=["u", "g"],
+            polynomial_degree=2,
+        )
+        out = engineer.fit_transform(X)
+        assert "u^2" in out.columns
+        assert "u_x_g" in out.columns
+        assert "g^2" in out.columns
+
+    def test_transforms_consistent_train_test(self):
+        train = pd.DataFrame(
+            {
+                "u": [20.0, 21.0],
+                "g": [19.0, 20.0],
+                "r": [18.0, 19.0],
+                "redshift": [0.1, 1.0],
+                "spectral_type": ["A/F", "G/K"],
+            }
+        )
+        test = pd.DataFrame(
+            {
+                "u": [22.0],
+                "g": [21.0],
+                "r": [20.0],
+                "redshift": [0.5],
+                "spectral_type": ["M"],
+            }
+        )
+        y_train = pd.Series(["GALAXY", "STAR"])
+        engineer = ColorFeatureEngineer(
+            drop_cols=[],
+            color_pairs=[("u", "g")],
+            cat_cols=["spectral_type"],
+            encoding="target",
+            ratio_pairs=[("u", "g")],
+            log_transform_cols=["redshift"],
+            poly_cols=["u", "g"],
+            polynomial_degree=2,
+        )
+        X_train = engineer.fit_transform(train, y_train)
+        X_test = engineer.transform(test)
+        assert list(X_train.columns) == list(X_test.columns)
+        assert X_test["spectral_type"].dtype == np.float32
+        assert "redshift_log" in X_test.columns
+        assert "u_g_ratio" in X_test.columns
+
 
 class TestStackingEnsemble:
     def test_fit_and_predict_on_synthetic_data(self):
@@ -174,6 +269,37 @@ class TestStackingEnsemble:
         preds = ensemble.predict(X_feat)
         assert len(preds) == n
         assert set(preds) <= set(classes)
+
+    def test_predict_proba_returns_probabilities(self):
+        rng = np.random.default_rng(42)
+        n = 200
+        X = pd.DataFrame(
+            {
+                "u": rng.uniform(15, 25, n),
+                "g": rng.uniform(14, 24, n),
+                "r": rng.uniform(13, 23, n),
+                "i": rng.uniform(12, 22, n),
+                "z": rng.uniform(11, 21, n),
+            }
+        )
+        classes = ["GALAXY", "STAR", "QSO"]
+        y = pd.Series(rng.choice(classes, n))
+
+        engineer = ColorFeatureEngineer()
+        X_feat = engineer.fit_transform(X)
+
+        base_models = [
+            ("lr", LogisticRegression(max_iter=500, random_state=42)),
+        ]
+        ensemble = StackingEnsemble(base_models)
+        cv = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
+        ensemble.fit(X_feat, y, cv)
+
+        probas = ensemble.predict_proba(X_feat)
+        assert probas.shape == (n, 3)
+        np.testing.assert_array_almost_equal(probas.sum(axis=1), np.ones(n))
+        assert np.all(probas >= 0)
+        assert np.all(probas <= 1)
 
     def test_save_load_roundtrip(self, tmp_path):
         n = 50

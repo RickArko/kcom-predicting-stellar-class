@@ -191,6 +191,31 @@ class StackingEnsemble:
         self.overall_oof_score_ = -result.fun
         return -result.fun
 
+    def predict_proba(self, X: pd.DataFrame) -> np.ndarray:
+        """Predict class probabilities for new data.
+
+        Parameters
+        ----------
+        X:
+            Feature DataFrame.
+
+        Returns
+        -------
+        Array of shape ``(n_samples, n_classes)`` with class probabilities.
+        """
+        n = len(X)
+        n_folds = len(self.fold_models_)
+
+        test_probas: dict[str, np.ndarray] = {
+            name: np.zeros((n, self.n_classes_)) for name, _ in self.base_models
+        }
+        for fold_models in self.fold_models_:
+            for name, _ in self.base_models:
+                test_probas[name] += fold_models[name].predict_proba(X) / n_folds
+
+        test_meta = np.hstack([test_probas[n] for n, _ in self.base_models])
+        return self.meta_model_.predict_proba(test_meta)
+
     def predict(self, X: pd.DataFrame) -> np.ndarray:
         """Predict class labels for new data.
 
