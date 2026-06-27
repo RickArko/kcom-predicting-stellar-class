@@ -22,7 +22,14 @@ from xgboost import XGBClassifier
 
 from stellar.data import load_config, load_data
 from stellar.features import ColorFeatureEngineer
-from stellar.models import SimpleAverageMeta, StackingEnsemble, save_submission
+from stellar.models import (
+    MODEL_REGISTRY,
+    SEED_PARAM_MAP,
+    SimpleAverageMeta,
+    StackingEnsemble,
+    WeightedAverageMeta,
+    save_submission,
+)
 from stellar.tracking import track_experiment
 
 logging.basicConfig(
@@ -56,12 +63,87 @@ def _expand_seeds(
         instance_cfg = cfg.copy()
         instance_cfg[seed_param] = seed
         suffix = f"_s{i}" if len(seeds) > 1 else ""
-        models.append((f"{name_prefix}{suffix}", model_cls(**instance_cfg)))
+        model = model_cls(**instance_cfg)
+        if not hasattr(model, "predict_proba"):
+            from sklearn.calibration import CalibratedClassifierCV
+
+            model = CalibratedClassifierCV(model, cv=3)
+        models.append((f"{name_prefix}{suffix}", model))
     return models
+
+
+def _build_meta_model(meta_cfg: dict) -> object:
+    """Build meta-model from the ``meta`` config section."""
+    meta_cfg = meta_cfg.copy() if meta_cfg else {}
+    meta_type = meta_cfg.pop("model", "logistic_regression")
+    calibrated = meta_cfg.pop("calibrated", False)
+
+    if meta_type == "simple_average":
+        return SimpleAverageMeta()
+    if meta_type == "gradient_boosting":
+        from sklearn.ensemble import GradientBoostingClassifier
+
+        meta_cfg.setdefault("random_state", 42)
+        return GradientBoostingClassifier(**meta_cfg)
+    if meta_type == "random_forest":
+        from sklearn.ensemble import RandomForestClassifier
+
+        meta_cfg.setdefault("random_state", 42)
+        return RandomForestClassifier(**meta_cfg)
+    if meta_type == "weighted_average":
+        return WeightedAverageMeta()
+
+    meta_cfg.setdefault("max_iter", 1000)
+    meta_cfg.setdefault("random_state", 42)
+    lr = LogisticRegression(**meta_cfg)
+    if calibrated:
+        from sklearn.calibration import CalibratedClassifierCV
+
+        return CalibratedClassifierCV(lr, cv=3, method="sigmoid")
+    return lr
+
+
+def _build_ensemble_from_list(
+    cfg: dict,
+) -> tuple[list[tuple[str, object]], object, dict[str, dict]]:
+    """Build base-model list and meta-model from new ``models`` list config."""
+    model_configs = cfg["models"]
+    catboost_fit_kwargs: dict[str, list] = {}
+    base_models: list[tuple[str, object]] = []
+
+    for entry_idx, mc in enumerate(model_configs):
+        mc = mc.copy()
+        model_type = mc.pop("type")
+
+        if model_type not in MODEL_REGISTRY:
+            msg = f"Unknown model type: {model_type!r}. Available: {list(MODEL_REGISTRY)}"
+            raise ValueError(msg)
+
+        model_cls = MODEL_REGISTRY[model_type]
+        seed_param = SEED_PARAM_MAP.get(model_type, "random_state")
+
+        if model_type == "catboost" and "cat_features" in mc:
+            catboost_fit_kwargs["cat_features"] = mc.pop("cat_features")
+
+        prefix = f"m{entry_idx:02d}_{model_type}"
+        models = _expand_seeds(mc, model_cls, seed_param, prefix)
+        base_models.extend(models)
+
+    model_fit_kwargs: dict[str, dict] = {}
+    if catboost_fit_kwargs:
+        for name, _ in base_models:
+            if "catboost" in name:
+                model_fit_kwargs[name] = catboost_fit_kwargs
+
+    meta_model = _build_meta_model(cfg.get("meta", {}))
+    return base_models, meta_model, model_fit_kwargs
 
 
 def _build_ensemble(cfg: dict) -> tuple[list[tuple[str, object]], object, dict[str, dict]]:
     """Build base-model list and meta-model from config."""
+    if "models" in cfg:
+        return _build_ensemble_from_list(cfg)
+
     model_cfgs = {}
     for name in ("lgbm", "xgb", "catboost"):
         model_cfgs[name] = cfg[name].copy()
@@ -86,22 +168,7 @@ def _build_ensemble(cfg: dict) -> tuple[list[tuple[str, object]], object, dict[s
         ),
     )
 
-    meta_params = cfg.get("meta", {}).copy()
-    meta_type = meta_params.pop("model", "logistic_regression")
-    calibrated = meta_params.pop("calibrated", False)
-
-    if meta_type == "simple_average":
-        meta_model: object = SimpleAverageMeta()
-    else:
-        meta_params.setdefault("max_iter", 1000)
-        meta_params.setdefault("random_state", 42)
-        lr = LogisticRegression(**meta_params)
-        if calibrated:
-            from sklearn.calibration import CalibratedClassifierCV
-
-            meta_model = CalibratedClassifierCV(lr, cv=3, method="sigmoid")
-        else:
-            meta_model = lr
+    meta_model = _build_meta_model(cfg.get("meta", {}))
 
     model_fit_kwargs: dict[str, dict] = {}
     if catboost_fit_kwargs:
@@ -150,7 +217,7 @@ def _run_pseudo_labeling(
         ensemble = StackingEnsemble(base_models, meta_model)
         ensemble.fit(X_cur, y_cur, cv, X_test, model_fit_kwargs=model_fit_kwargs)
 
-        probas = ensemble.predict_proba(X_test)
+        probas = ensemble.predict_proba_base_avg(X_test)
         max_probas = np.max(probas, axis=1)
         confident = max_probas >= threshold
 

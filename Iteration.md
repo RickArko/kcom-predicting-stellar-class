@@ -403,3 +403,115 @@ make submit SUBMISSION_FILE=outputs/runs/20260624_131300_baseline/submission.csv
   alongside their config and metrics in each run directory.
 - The `scripts/compare.py` utility reads from `outputs/runs/` — no database or
   external tracking system needed for basic iteration.
+
+---
+
+## Improvement Plan
+
+### Phase 1 — Model Diversity
+
+**Hypothesis:** Adding non-tree models (ExtraTrees, HistGBM, Ridge) brings genuinely
+orthogonal signals that the all-boosting ensemble can't capture.
+
+**Changes:**
+- `src/stellar/models.py` — Added `MODEL_REGISTRY` mapping 6 model types to their
+  sklearn classes, plus `SEED_PARAM_MAP` for seed-parameter names per type.
+- `scripts/train.py` — Added `_build_ensemble_from_list()` that parses a new
+  `models` list config format. Old and new config formats coexist via dispatch
+  in `_build_ensemble`.
+- `config/experiments/v011_model_diversity.yaml` — 8 models (2×LGBM, 2×ExtraTrees,
+  XGB, CatBoost, HistGBM, Ridge), 5-fold CV, simple average + threshold tuning.
+
+**Expected:** +0.003–0.008 OOF.
+
+---
+
+### Phase 2 — Fix Pseudo-Labeling
+
+**Hypothesis:** At 0.95 threshold, 84% of the test set is "confident" — the model
+mostly sees its own predictions. At 0.999, only truly unambiguous rows pass
+through, forcing the model to learn from its uncertain region.
+
+**Changes:**
+- `src/stellar/models.py` — Added `predict_proba_base_avg()` to
+  `StackingEnsemble`, averaging base-model probabilities across folds and
+  bypassing the meta-model.
+- `scripts/train.py` — `_run_pseudo_labeling` now uses
+  `predict_proba_base_avg` for confidence thresholding.
+- `config/experiments/v012_pseudo_label_099.yaml` — Based on v011, with
+  `pseudo_label.enabled: true`, `confidence_threshold: 0.999`,
+  `max_iterations: 2`.
+
+**Expected:** +0.003–0.010 OOF.
+
+---
+
+### Phase 3 — Better Meta-Model
+
+**Hypothesis:** Simple average treats every base model equally. A
+GradientBoosting blender on OOF probabilities can learn cross-model
+patterns and per-class expert weights.
+
+**Changes:**
+- `src/stellar/models.py` — Added `WeightedAverageMeta` (learns per-model
+  per-class weights via constrained L-BFGS-B optimisation).
+- `scripts/train.py` — Added `_build_meta_model()` dispatching to:
+  `simple_average`, `logistic_regression`, `gradient_boosting`,
+  `random_forest`, or `weighted_average`.
+- `config/experiments/v013_gbm_meta.yaml` — Diverse models from Phase 1 with
+  `meta.model: gradient_boosting` (GradientBoostingClassifier blender).
+
+**Expected:** +0.002–0.005 OOF.
+
+---
+
+### Phase 4 — Feature Selection
+
+**Hypothesis:** 39 features (especially the 20 polynomial additions) add
+noise. Pruning to ~15–20 via permutation importance reduces overfitting.
+
+**Changes:**
+- `scripts/compare.py` — Added `--feature-importance` flag that loads the
+  best run's ensemble, runs permutation importance on OOF meta-features,
+  prints a ranked table, and saves CSV + optional matplotlib plot.
+
+**Expected:** +0.001–0.003 OOF.
+
+---
+
+### Phase 5 — Adversarial Validation (Diagnostic)
+
+**Hypothesis:** The synthetic training data may have distribution shift from
+the test set (which could be real SDSS data). Detecting this prevents
+overfitting to spurious patterns.
+
+**Changes:**
+- `scripts/adversarial_validate.py` (new) — Concatenates train and test,
+  trains an LGBM to distinguish them, reports AUC (>0.8 = significant shift),
+  prints per-feature importance, and saves results.
+
+**Expected:** ~2 min runtime; no score impact, but diagnostic value.
+
+---
+
+### Experiment Workflow
+
+```bash
+# Phase 1 — diverse models
+make train CONFIG=config/experiments/v011_model_diversity.yaml RUN_NAME=v011_div
+
+# Phase 2 — fix pseudo-labeling
+make train CONFIG=config/experiments/v012_pseudo_label_099.yaml RUN_NAME=v012_pl
+
+# Phase 3 — GBM meta
+make train CONFIG=config/experiments/v013_gbm_meta.yaml RUN_NAME=v013_gbm
+
+# Phase 4 — feature importance analysis
+uv run python scripts/compare.py --feature-importance
+
+# Phase 5 — adversarial validation
+uv run python scripts/adversarial_validate.py
+
+# Compare all runs
+uv run python scripts/compare.py
+```

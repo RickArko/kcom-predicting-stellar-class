@@ -5,11 +5,33 @@ from pathlib import Path
 import joblib
 import numpy as np
 import pandas as pd
+from catboost import CatBoostClassifier
+from lightgbm import LGBMClassifier
 from sklearn.base import BaseEstimator, ClassifierMixin, clone
-from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import ExtraTreesClassifier, HistGradientBoostingClassifier
+from sklearn.linear_model import LogisticRegression, RidgeClassifier
 from sklearn.metrics import balanced_accuracy_score
 from sklearn.preprocessing import LabelEncoder
 from tqdm.auto import tqdm
+from xgboost import XGBClassifier
+
+MODEL_REGISTRY: dict[str, type] = {
+    "lgbm": LGBMClassifier,
+    "xgb": XGBClassifier,
+    "catboost": CatBoostClassifier,
+    "extratrees": ExtraTreesClassifier,
+    "histgbm": HistGradientBoostingClassifier,
+    "ridge": RidgeClassifier,
+}
+
+SEED_PARAM_MAP: dict[str, str] = {
+    "lgbm": "random_state",
+    "xgb": "random_state",
+    "catboost": "random_seed",
+    "extratrees": "random_state",
+    "histgbm": "random_state",
+    "ridge": "random_state",
+}
 
 
 class SimpleAverageMeta(BaseEstimator, ClassifierMixin):
@@ -39,6 +61,55 @@ class SimpleAverageMeta(BaseEstimator, ClassifierMixin):
         n_classes = len(self.classes_)
         reshaped = X.reshape(X.shape[0], self.n_models_, n_classes)
         return reshaped.mean(axis=1)
+
+
+class WeightedAverageMeta(BaseEstimator, ClassifierMixin):
+    """Learns per-model per-class weights via constrained optimization.
+
+    Optimises balanced accuracy on the OOF meta-features by scaling each
+    (model, class) pair's probability contribution.  Uses L-BFGS-B with
+    non-negativity constraints so weights are interpretable.
+    """
+
+    def __init__(self):
+        pass
+
+    def fit(self, X, y):
+        self.classes_ = np.unique(y)
+        n_classes = len(self.classes_)
+        n_models = X.shape[1] // n_classes
+
+        from scipy.optimize import minimize
+
+        reshaped = X.reshape(X.shape[0], n_models, n_classes)
+
+        def neg_balanced_acc(weights):
+            w = weights.reshape(n_models, n_classes)
+            scores = (reshaped * w[np.newaxis, :, :]).sum(axis=1)
+            preds = np.argmax(scores, axis=1)
+            return -balanced_accuracy_score(y, preds)
+
+        x0 = np.ones(n_models * n_classes)
+        bounds = [(0, None)] * (n_models * n_classes)
+        result = minimize(neg_balanced_acc, x0, method="L-BFGS-B", bounds=bounds)
+        self.weights_ = result.x.reshape(n_models, n_classes)
+        return self
+
+    def predict(self, X):
+        n_classes = len(self.classes_)
+        n_models = X.shape[1] // n_classes
+        reshaped = X.reshape(X.shape[0], n_models, n_classes)
+        scores = (reshaped * self.weights_[np.newaxis, :, :]).sum(axis=1)
+        return np.argmax(scores, axis=1)
+
+    def predict_proba(self, X):
+        n_classes = len(self.classes_)
+        n_models = X.shape[1] // n_classes
+        reshaped = X.reshape(X.shape[0], n_models, n_classes)
+        scores = (reshaped * self.weights_[np.newaxis, :, :]).sum(axis=1)
+        row_sums = scores.sum(axis=1, keepdims=True)
+        row_sums = np.where(row_sums == 0, 1, row_sums)
+        return scores / row_sums
 
 
 class StackingEnsemble:
@@ -217,6 +288,22 @@ class StackingEnsemble:
 
         test_meta = np.hstack([test_probas[n] for n, _ in self.base_models])
         return self.meta_model_.predict_proba(test_meta)
+
+    def predict_proba_base_avg(self, X: pd.DataFrame) -> np.ndarray:
+        """Average of base-model probabilities across folds, bypassing meta-model.
+
+        Returns
+        -------
+        Array of shape ``(n_samples, n_classes)`` — simple average across
+        all fold × base-model probability estimates.
+        """
+        n = len(X)
+        n_folds = len(self.fold_models_)
+        probas = np.zeros((n, self.n_classes_))
+        for fold_models in self.fold_models_:
+            for name, _ in self.base_models:
+                probas += fold_models[name].predict_proba(X) / n_folds
+        return probas / len(self.base_models)
 
     def predict(self, X: pd.DataFrame) -> np.ndarray:
         """Predict class labels for new data.

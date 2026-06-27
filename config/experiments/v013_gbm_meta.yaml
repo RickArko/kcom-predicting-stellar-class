@@ -1,0 +1,115 @@
+competition:
+  name: playground-series-s6e6
+  url: https://www.kaggle.com/competitions/playground-series-s6e6
+  metric: balanced_accuracy
+  target: class
+  classes:
+    - GALAXY
+    - STAR
+    - QSO
+
+paths:
+  data: data/
+  outputs: outputs/
+  submissions: outputs/submissions/
+  models: models/
+
+data:
+  augment_path: data/original.csv
+  dedup_cols: [alpha, delta, u, g, r, i, z, redshift]
+
+features:
+  drop_cols:
+    - id
+    - obj_ID
+    - run_ID
+    - rerun_ID
+    - cam_col
+    - field_ID
+    - spec_obj_ID
+    - fiber_ID
+    - spectral_type
+    - galaxy_population
+    - plate
+    - MJD
+  color_pairs:
+    - [u, g]
+    - [g, r]
+    - [r, i]
+    - [i, z]
+  interaction_pairs:
+    - [redshift, u_g]
+    - [redshift, g_r]
+    - [redshift, r_i]
+    - [redshift, i_z]
+    - [u_g, g_r]
+    - [g_r, r_i]
+    - [r_i, i_z]
+
+cv:
+  n_splits: 5
+  shuffle: true
+  random_state: 42
+
+models:
+  - type: lgbm
+    seeds: [42, 43]
+    n_estimators: 1000
+    learning_rate: 0.05
+    num_leaves: 127
+    max_depth: -1
+    min_child_samples: 20
+    subsample: 0.8
+    colsample_bytree: 0.8
+    reg_alpha: 0.1
+    reg_lambda: 0.1
+    n_jobs: -1
+    verbose: -1
+
+  - type: extratrees
+    seeds: [42, 43]
+    n_estimators: 500
+    max_depth: 12
+    min_samples_split: 10
+    min_samples_leaf: 5
+    n_jobs: -1
+    random_state: 42
+
+  - type: xgb
+    n_estimators: 1000
+    learning_rate: 0.05
+    max_depth: 6
+    subsample: 0.8
+    colsample_bytree: 0.8
+    reg_alpha: 0.1
+    reg_lambda: 1.0
+    eval_metric: mlogloss
+    random_state: 42
+    n_jobs: -1
+
+  - type: catboost
+    iterations: 1000
+    learning_rate: 0.05
+    depth: 6
+    l2_leaf_reg: 3
+    random_seed: 42
+    verbose: 0
+
+  - type: histgbm
+    max_iter: 500
+    learning_rate: 0.1
+    max_depth: 6
+    min_samples_leaf: 20
+    random_state: 42
+
+  - type: ridge
+    max_iter: 5000
+    random_state: 42
+
+meta:
+  model: gradient_boosting
+  n_estimators: 200
+  max_depth: 3
+  learning_rate: 0.1
+  random_state: 42
+  tune_thresholds: false
