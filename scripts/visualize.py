@@ -44,6 +44,18 @@ def parse_args() -> argparse.Namespace:
         help="Directory of local experiment runs",
     )
     parser.add_argument(
+        "--tfm-dir",
+        type=str,
+        default="outputs/tfm",
+        help="Directory of TFM/blend probability artifacts",
+    )
+    parser.add_argument(
+        "--local-top",
+        type=int,
+        default=5,
+        help="Number of top unsubmitted local runs to include",
+    )
+    parser.add_argument(
         "--no-kaggle",
         action="store_true",
         help="Skip Kaggle API call; use local OOF scores only",
@@ -218,6 +230,38 @@ def load_local_runs(runs_dir: str) -> dict[str, dict]:
             "valid_scores": meta.get("valid_scores", []),
             "elapsed": data.get("elapsed_seconds", 0),
             "dir": str(run_dir),
+            "source": "run",
+            "match_name": name,
+        }
+    return runs
+
+
+def load_tfm_runs(tfm_dir: str) -> dict[str, dict]:
+    """Load OOF scores from TFM/blend artifact directories."""
+    runs = {}
+    runs_path = Path(tfm_dir)
+    if not runs_path.exists():
+        return runs
+    for run_dir in sorted(runs_path.iterdir()):
+        if not run_dir.is_dir():
+            continue
+        metrics_path = run_dir / "metrics.json"
+        submission_path = run_dir / "submission.csv"
+        if not metrics_path.exists() or not submission_path.exists():
+            continue
+        with open(metrics_path) as f:
+            metrics = json.load(f)
+        oof = metrics.get("overall_oof_score")
+        if oof is None:
+            continue
+        name = re.sub(r"^\d{8}_\d{6}_", "", run_dir.name)
+        runs[f"tfm/{name}"] = {
+            "oof": oof,
+            "valid_scores": metrics.get("valid_scores", []),
+            "elapsed": metrics.get("wall_time_seconds", 0),
+            "dir": str(run_dir),
+            "source": metrics.get("model_family", "tfm"),
+            "match_name": name,
         }
     return runs
 
@@ -240,7 +284,10 @@ def _short_label(name: str) -> str:
 def _match_run_to_oof(description: str, runs: dict[str, dict]) -> float | None:
     """Try to find a local OOF score matching a Kaggle submission description."""
     for name, info in runs.items():
+        match_name = info.get("match_name", name)
         if name in description or description.startswith(name):
+            return info["oof"]
+        if match_name in description or description.startswith(match_name):
             return info["oof"]
     if "OOF" in description:
         m = re.search(r"OOF\s+([\d.]+)", description)
@@ -253,6 +300,7 @@ def build_chart_data(
     runs: dict[str, dict],
     submissions: list[dict],
     max_bars: int = 10,
+    local_top: int = 5,
 ) -> list[dict]:
     """Merge local runs and Kaggle submissions into chart rows.
 
@@ -278,6 +326,22 @@ def build_chart_data(
                     "private": s["private_score"],
                 }
             )
+        submitted_labels = {r["label"] for r in chart}
+        local_rows = sorted(runs.items(), key=lambda item: item[1]["oof"], reverse=True)
+        for name, info in local_rows:
+            label = _short_label(info.get("match_name", name))
+            if label in submitted_labels:
+                continue
+            chart.append(
+                {
+                    "label": label,
+                    "oof": info["oof"],
+                    "public": None,
+                    "private": None,
+                }
+            )
+            if len(chart) >= max_bars or len(chart) >= len(rows) + local_top:
+                break
         return chart[:max_bars]
 
     chart = []
@@ -418,7 +482,9 @@ def main() -> None:
 
     logger.info("Loading local runs from %s ...", args.runs_dir)
     runs = load_local_runs(args.runs_dir)
-    logger.info("  Found %d runs with OOF scores", len(runs))
+    tfm_runs = load_tfm_runs(args.tfm_dir)
+    runs.update(tfm_runs)
+    logger.info("  Found %d runs/artifacts with OOF scores", len(runs))
 
     submissions = []
     percentiles = {}
@@ -430,7 +496,7 @@ def main() -> None:
         logger.info("Fetching leaderboard percentiles ...")
         percentiles = fetch_leaderboard_percentiles(args.competition)
 
-    chart = build_chart_data(runs, submissions)
+    chart = build_chart_data(runs, submissions, local_top=args.local_top)
     if not chart:
         logger.error("No data to plot. Run some experiments first.")
         return

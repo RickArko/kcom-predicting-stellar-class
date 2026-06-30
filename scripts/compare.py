@@ -3,6 +3,7 @@
 Usage:
     uv run python scripts/compare.py
     uv run python scripts/compare.py --sort-by overall_oof_score
+    uv run python scripts/compare.py --all
     uv run python scripts/compare.py --feature-importance
 """
 
@@ -18,6 +19,7 @@ import pandas as pd
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Compare experiment runs.")
     parser.add_argument("--runs-dir", type=str, default="outputs/runs")
+    parser.add_argument("--tfm-dir", type=str, default="outputs/tfm")
     parser.add_argument(
         "--sort-by",
         type=str,
@@ -34,6 +36,11 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=20,
         help="Number of top features to show (default 20)",
+    )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Include incomplete runs without OOF scores or submissions",
     )
     return parser.parse_args()
 
@@ -127,18 +134,17 @@ def _run_feature_importance(runs_dir: Path, top_n: int) -> None:
         print("matplotlib not available — skipping plot.")
 
 
-def main() -> None:
-    args = parse_args()
-    runs_dir = Path(args.runs_dir)
-    if not runs_dir.exists():
-        print(f"No runs directory found at {runs_dir}")
-        return
+def _mean_valid_score(valid_scores: list[float] | None) -> float | None:
+    if not valid_scores:
+        return None
+    return round(sum(valid_scores) / len(valid_scores), 4)
 
-    if args.feature_importance:
-        _run_feature_importance(runs_dir, args.top_n)
-        return
 
+def _load_training_runs(runs_dir: Path, include_all: bool) -> list[dict]:
     rows = []
+    if not runs_dir.exists():
+        return rows
+
     for run_dir in sorted(runs_dir.iterdir()):
         if not run_dir.is_dir():
             continue
@@ -147,25 +153,84 @@ def main() -> None:
             continue
         with open(metrics_path) as f:
             data = json.load(f)
+
         meta = data.get("metrics", {})
         params = data.get("params", {})
         submission_path = run_dir / "submission.csv"
+        oof = meta.get("overall_oof_score")
+        submission_exists = submission_path.exists()
+        if not include_all and (oof is None or not submission_exists):
+            continue
+
         rows.append(
             {
+                "source": "run",
                 "run": run_dir.name,
-                "overall_oof_score": meta.get("overall_oof_score"),
-                "mean_valid_score": (
-                    round(sum(meta.get("valid_scores", [])) / len(meta["valid_scores"]), 4)
-                    if meta.get("valid_scores")
-                    else None
-                ),
+                "model_family": params.get("meta_model", "stacking"),
+                "overall_oof_score": oof,
+                "mean_valid_score": _mean_valid_score(meta.get("valid_scores")),
                 "n_features": meta.get("n_features"),
                 "n_base_models": params.get("n_base_models"),
                 "cv_n_splits": params.get("cv_n_splits"),
                 "elapsed_seconds": round(data.get("elapsed_seconds", 0), 1),
-                "submission_exists": submission_path.exists(),
+                "submission_exists": submission_exists,
+                "path": str(run_dir),
             }
         )
+    return rows
+
+
+def _load_tfm_runs(tfm_dir: Path, include_all: bool) -> list[dict]:
+    rows = []
+    if not tfm_dir.exists():
+        return rows
+
+    for run_dir in sorted(tfm_dir.iterdir()):
+        if not run_dir.is_dir():
+            continue
+        metrics_path = run_dir / "metrics.json"
+        if not metrics_path.exists():
+            continue
+        with open(metrics_path) as f:
+            metrics = json.load(f)
+
+        submission_path = run_dir / "submission.csv"
+        oof = metrics.get("overall_oof_score")
+        submission_exists = submission_path.exists()
+        if not include_all and (oof is None or not submission_exists):
+            continue
+
+        rows.append(
+            {
+                "source": "tfm",
+                "run": run_dir.name,
+                "model_family": metrics.get("model_family"),
+                "overall_oof_score": oof,
+                "mean_valid_score": metrics.get("mean_valid_score"),
+                "n_features": metrics.get("n_features"),
+                "n_base_models": None,
+                "cv_n_splits": None,
+                "elapsed_seconds": metrics.get("wall_time_seconds"),
+                "submission_exists": submission_exists,
+                "path": str(run_dir),
+            }
+        )
+    return rows
+
+
+def main() -> None:
+    args = parse_args()
+    runs_dir = Path(args.runs_dir)
+
+    if args.feature_importance:
+        if not runs_dir.exists():
+            print(f"No runs directory found at {runs_dir}")
+            return
+        _run_feature_importance(runs_dir, args.top_n)
+        return
+
+    rows = _load_training_runs(runs_dir, args.all)
+    rows.extend(_load_tfm_runs(Path(args.tfm_dir), args.all))
 
     if not rows:
         print("No experiment runs found.")

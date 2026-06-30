@@ -1,0 +1,51 @@
+competition:
+  name: playground-series-s6e6
+  metric: balanced_accuracy
+  target: class
+  classes:
+    - GALAXY
+    - STAR
+    - QSO
+
+paths:
+  data: data/
+  tfm_outputs: outputs/tfm/
+
+data: {}
+
+features:
+  mode: engineered
+  drop_cols:
+    - id
+    - obj_ID
+    - run_ID
+    - rerun_ID
+    - cam_col
+    - field_ID
+    - spec_obj_ID
+    - fiber_ID
+    - spectral_type
+    - galaxy_population
+    - plate
+    - MJD
+  color_pairs:
+    - [u, g]
+    - [g, r]
+    - [r, i]
+    - [i, z]
+  cat_cols: []
+  encoding: ohe
+
+cv:
+  n_splits: 3
+  shuffle: true
+  random_state: 42
+
+backend:
+  name: dummy
+  params:
+    max_iter: 1000
+    random_state: 42
+
+benchmark:
+  tune_thresholds: true

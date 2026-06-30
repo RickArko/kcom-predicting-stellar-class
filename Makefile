@@ -7,7 +7,7 @@ SUBMISSION_MSG  ?= "benchmark: stacked LGBM+XGB+CatBoost with LogisticRegression
 CONFIG          ?= config/config.yaml
 RUN_NAME        ?=
 
-.PHONY: all install download train predict submit test lint format format-fix visualize clean
+.PHONY: all install download train predict submit submit-best test lint format format-fix visualize clean
 
 all: install download train submit
 	@echo ""
@@ -69,6 +69,11 @@ submit:
 	echo "✓ Submitted! Checking leaderboard..." && \
 	KAGGLE_API_TOKEN="$$TOKEN" uv run kaggle competitions leaderboard \
 		-c $(COMPETITION) --show
+
+submit-best:
+	@BEST_FILE="$$(uv run python scripts/select_best_submission.py --field path)"; \
+	BEST_MSG="$$(uv run python scripts/select_best_submission.py --field message)"; \
+	$(MAKE) submit SUBMISSION_FILE="$$BEST_FILE" SUBMISSION_MSG="$$BEST_MSG"
 
 test:
 	@uv run pytest tests/ -v $(ARGS)

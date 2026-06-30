@@ -94,6 +94,54 @@ Re-predict without retraining:
 uv run python scripts/predict.py --run-dir outputs/runs/<timestamp>_final
 ```
 
+## Tabular Foundation Benchmarks
+
+TFM and AutoML benchmark runs write probability artifacts under `outputs/tfm/`
+with OOF probabilities, test probabilities, metrics, and `submission.csv`.
+
+```bash
+# 1. Check the current tree-stack incumbent
+uv run python scripts/compare.py
+
+# 2. Offline smoke test for the benchmark runner
+uv run python scripts/benchmark_tfm.py --config config/tfm/dummy.yaml --run-name smoke
+
+# 3. Install real backends only when needed
+uv sync --no-dev --group tfm
+
+# 4. Run candidate benchmarks
+uv run python scripts/benchmark_tfm.py \
+  --config config/tfm/autogluon_fast.yaml \
+  --run-name ag_fast
+
+uv run python scripts/benchmark_tfm.py \
+  --config config/tfm/tabicl_v2_ctx10k_raw.yaml \
+  --run-name tabicl_ctx10k_raw
+
+uv run python scripts/benchmark_tfm.py \
+  --config config/tfm/tabpfn26_ctx10k_raw.yaml \
+  --run-name tabpfn26_ctx10k_raw
+
+# 5. Score and rank normal runs plus TFM/blend artifacts
+uv run python scripts/compare.py
+
+# 6. Blend the best probability artifacts, then re-score
+uv run python scripts/blend_predictions.py \
+  --runs outputs/tfm/<best_run_a> outputs/tfm/<best_run_b> \
+  --run-name blend_best \
+  --per-class
+
+uv run python scripts/compare.py
+make visualize
+
+# 7. Submit the winning artifact
+make submit-best
+```
+
+Real AutoGluon, TabICL, and TabPFN runs can be slow and may require GPU access,
+model-license acceptance, or package-specific credentials. Keep the dummy run as
+the first sanity check before launching paid-in-runtime experiments.
+
 ## Kaggle API Setup
 
 ```bash
@@ -172,6 +220,13 @@ Submit a custom file:
 make submit SUBMISSION_FILE=outputs/runs/<name>/submission.csv SUBMISSION_MSG="description"
 ```
 
+Submit the highest local OOF `submission.csv` from either `outputs/runs/` or
+`outputs/tfm/`:
+
+```bash
+make submit-best
+```
+
 ## Repository Structure
 
 ```
@@ -179,11 +234,13 @@ config/
   config.yaml              # tuned default (5-fold, 1000 estimators)
   baseline.yaml            # fast reference (3-fold, 250 estimators)
   experiments/             # v001–v009 + final.yaml
+  tfm/                     # tabular foundation / AutoML benchmark configs
 src/stellar/               # data.py, features.py, models.py, tracking.py
-scripts/                   # train.py, predict.py, compare.py, visualize.py
+scripts/                   # train.py, predict.py, compare.py, benchmark_tfm.py, score_tfm.py
 tests/                     # unit + integration (synthetic SDSS-like data)
 docs/experiments/          # per-topic experiment reports
 outputs/runs/              # timestamped run artifacts (config, metrics, model, submission)
+outputs/tfm/               # TFM/blend artifacts with OOF/test probabilities
 ```
 
 ## Submission

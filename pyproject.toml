@@ -40,9 +40,25 @@ select = ["E", "F", "I"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
+[tool.uv]
+conflicts = [
+    [
+        { group = "dev" },
+        { group = "tfm" },
+    ],
+]
+
+[tool.uv.dependency-groups]
+tfm = { requires-python = ">=3.11,<3.14" }
+
 [dependency-groups]
 dev = [
     "ipykernel>=7.3.0",
     "matplotlib>=3.11.0",
     "seaborn>=0.13.2",
+]
+tfm = [
+    "autogluon.tabular>=1.5.0",
+    "tabicl>=0.1.0",
+    "tabpfn>=2.5.0",
 ]

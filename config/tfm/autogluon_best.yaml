@@ -1,0 +1,69 @@
+competition:
+  name: playground-series-s6e6
+  metric: balanced_accuracy
+  target: class
+  classes:
+    - GALAXY
+    - STAR
+    - QSO
+
+paths:
+  data: data/
+  tfm_outputs: outputs/tfm/
+
+data:
+  augment_path: data/original.csv
+  dedup_cols: [alpha, delta, u, g, r, i, z, redshift]
+
+features:
+  mode: domain
+  drop_cols:
+    - id
+    - obj_ID
+    - run_ID
+    - rerun_ID
+    - cam_col
+    - field_ID
+    - spec_obj_ID
+    - fiber_ID
+    - plate
+    - MJD
+  color_pairs:
+    - [u, g]
+    - [g, r]
+    - [r, i]
+    - [i, z]
+  ratio_pairs:
+    - [u, g]
+    - [g, r]
+    - [r, i]
+    - [i, z]
+  log_transform_cols:
+    - redshift
+  interaction_pairs:
+    - [redshift, u_g]
+    - [redshift, g_r]
+    - [redshift, r_i]
+    - [redshift, i_z]
+  cat_cols:
+    - spectral_type
+    - galaxy_population
+  encoding: passthrough
+
+cv:
+  n_splits: 5
+  shuffle: true
+  random_state: 42
+
+backend:
+  name: autogluon
+  params:
+    label: class
+    predictor_kwargs:
+      eval_metric: balanced_accuracy
+    fit_kwargs:
+      presets: best_quality
+      time_limit: 7200
+
+benchmark:
+  tune_thresholds: true

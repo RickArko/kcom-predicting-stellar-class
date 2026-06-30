@@ -1,0 +1,45 @@
+competition:
+  name: playground-series-s6e6
+  metric: balanced_accuracy
+  target: class
+  classes:
+    - GALAXY
+    - STAR
+    - QSO
+
+paths:
+  data: data/
+  tfm_outputs: outputs/tfm/
+
+data:
+  augment_path: data/original.csv
+  dedup_cols: [alpha, delta, u, g, r, i, z, redshift]
+
+features:
+  mode: raw
+  drop_cols:
+    - id
+    - obj_ID
+    - run_ID
+    - rerun_ID
+    - cam_col
+    - field_ID
+    - spec_obj_ID
+    - fiber_ID
+    - plate
+    - MJD
+
+cv:
+  n_splits: 5
+  shuffle: true
+  random_state: 42
+
+backend:
+  name: tabpfn
+  context_rows: 10000
+  predict_batch_size: 2000
+  params:
+    model_version: V2_6
+
+benchmark:
+  tune_thresholds: true

@@ -1,0 +1,70 @@
+competition:
+  name: playground-series-s6e6
+  metric: balanced_accuracy
+  target: class
+  classes:
+    - GALAXY
+    - STAR
+    - QSO
+
+paths:
+  data: data/
+  tfm_outputs: outputs/tfm/
+
+data:
+  augment_path: data/original.csv
+  dedup_cols: [alpha, delta, u, g, r, i, z, redshift]
+
+features:
+  mode: domain
+  drop_cols:
+    - id
+    - obj_ID
+    - run_ID
+    - rerun_ID
+    - cam_col
+    - field_ID
+    - spec_obj_ID
+    - fiber_ID
+    - plate
+    - MJD
+  color_pairs:
+    - [u, g]
+    - [g, r]
+    - [r, i]
+    - [i, z]
+  ratio_pairs:
+    - [u, g]
+    - [g, r]
+    - [r, i]
+    - [i, z]
+  log_transform_cols:
+    - redshift
+  interaction_pairs:
+    - [redshift, u_g]
+    - [redshift, g_r]
+    - [redshift, r_i]
+    - [redshift, i_z]
+  cat_cols:
+    - spectral_type
+    - galaxy_population
+  encoding: passthrough
+
+cv:
+  n_splits: 5
+  shuffle: true
+  random_state: 42
+
+backend:
+  name: tabicl
+  context_rows: 50000
+  predict_batch_size: 5000
+  params:
+    n_estimators: 8
+    kv_cache: true
+    checkpoint_version: tabicl-classifier-v2-20260212.ckpt
+    random_state: 42
+    verbose: true
+
+benchmark:
+  tune_thresholds: true
