@@ -159,7 +159,7 @@ class AutoGluonBackend(BenchmarkBackend):
     def fit(self, X: pd.DataFrame, y: pd.Series) -> None:
         label = self.params.get("label", "class")
         train_df = X.copy()
-        train_df[label] = y.to_numpy()
+        train_df[label] = pd.Series(y, index=X.index).astype(str).astype(object)
         predictor_kwargs = self.params.get("predictor_kwargs", {})
         fit_kwargs = self.params.get("fit_kwargs", {})
         self.predictor = self.TabularPredictor(

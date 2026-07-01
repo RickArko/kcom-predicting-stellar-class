@@ -83,22 +83,28 @@ Install real backends only when ready to run them:
 
 ```bash
 uv sync --no-dev --group tfm
+
+# TabPFN credentials are loaded automatically from repo-root .env.
+printf 'TABPFN_API_KEY=your-key-here\n' > .env
 ```
 
 Then start with the cheapest real runs:
 
 ```bash
-uv run python scripts/benchmark_tfm.py \
+uv run --no-dev --group tfm python scripts/benchmark_tfm.py \
   --config config/tfm/autogluon_fast.yaml \
   --run-name ag_fast
 
-uv run python scripts/benchmark_tfm.py \
+uv run --no-dev --group tfm python scripts/benchmark_tfm.py \
   --config config/tfm/tabicl_v2_ctx10k_raw.yaml \
   --run-name tabicl_ctx10k_raw
 
-uv run python scripts/benchmark_tfm.py \
+uv run --no-dev --group tfm python scripts/benchmark_tfm.py \
   --config config/tfm/tabpfn26_ctx10k_raw.yaml \
   --run-name tabpfn26_ctx10k_raw
+
+# Return to the normal dev environment before lint/test/visualize
+uv sync --extra dev
 ```
 
 ## Benchmark Configs

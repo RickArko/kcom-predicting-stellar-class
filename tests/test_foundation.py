@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 from pathlib import Path
 
 import numpy as np
@@ -28,6 +29,7 @@ def _load_script_func(script_name: str, func_name: str):
 
 
 run_benchmark = _load_script_func("benchmark_tfm.py", "run_benchmark")
+load_tfm_env = _load_script_func("benchmark_tfm.py", "_load_env")
 run_blend = _load_script_func("blend_predictions.py", "run_blend")
 collect_scores = _load_script_func("score_tfm.py", "collect_scores")
 select_best = _load_script_func("select_best_submission.py", "select_best")
@@ -65,6 +67,24 @@ def test_align_proba_reorders_columns():
     proba = np.array([[0.2, 0.7, 0.1]])
     aligned = align_proba(proba, ["QSO", "GALAXY", "STAR"], ["GALAXY", "STAR", "QSO"])
     np.testing.assert_array_equal(aligned, np.array([[0.7, 0.1, 0.2]]))
+
+
+def test_load_env_maps_tabpfn_api_key(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("TABPFN_API_KEY", raising=False)
+    monkeypatch.delenv("TABPFN_TOKEN", raising=False)
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.delenv("HUGGINGFACE_HUB_TOKEN", raising=False)
+    (tmp_path / ".env").write_text("TABPFN_API_KEY=test-key\n")
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("{}\n")
+
+    load_tfm_env(str(config_path))
+
+    assert os.environ["TABPFN_API_KEY"] == "test-key"
+    assert os.environ["TABPFN_TOKEN"] == "test-key"
+    assert os.environ["HF_TOKEN"] == "test-key"
+    assert os.environ["HUGGINGFACE_HUB_TOKEN"] == "test-key"
 
 
 def test_stratified_context_indices_keeps_classes():

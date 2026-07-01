@@ -109,18 +109,24 @@ uv run python scripts/benchmark_tfm.py --config config/tfm/dummy.yaml --run-name
 # 3. Install real backends only when needed
 uv sync --no-dev --group tfm
 
+# 3b. Put your TabPFN key in repo-root .env
+printf 'TABPFN_API_KEY=your-key-here\n' > .env
+
 # 4. Run candidate benchmarks
-uv run python scripts/benchmark_tfm.py \
+uv run --no-dev --group tfm python scripts/benchmark_tfm.py \
   --config config/tfm/autogluon_fast.yaml \
   --run-name ag_fast
 
-uv run python scripts/benchmark_tfm.py \
+uv run --no-dev --group tfm python scripts/benchmark_tfm.py \
   --config config/tfm/tabicl_v2_ctx10k_raw.yaml \
   --run-name tabicl_ctx10k_raw
 
-uv run python scripts/benchmark_tfm.py \
+uv run --no-dev --group tfm python scripts/benchmark_tfm.py \
   --config config/tfm/tabpfn26_ctx10k_raw.yaml \
   --run-name tabpfn26_ctx10k_raw
+
+# 4b. Return to the normal dev environment before lint/test/visualize
+uv sync --extra dev
 
 # 5. Score and rank normal runs plus TFM/blend artifacts
 uv run python scripts/compare.py
@@ -140,7 +146,9 @@ make submit-best
 
 Real AutoGluon, TabICL, and TabPFN runs can be slow and may require GPU access,
 model-license acceptance, or package-specific credentials. Keep the dummy run as
-the first sanity check before launching paid-in-runtime experiments.
+the first sanity check before launching paid-in-runtime experiments. `benchmark_tfm.py`
+loads repo-root `.env` automatically with `python-dotenv`; name the TabPFN key
+`TABPFN_API_KEY`.
 
 ## Kaggle API Setup
 

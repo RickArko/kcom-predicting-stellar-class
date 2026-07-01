@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import subprocess
 import time
 from datetime import datetime
@@ -16,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from dotenv import load_dotenv
 from sklearn.metrics import balanced_accuracy_score
 from sklearn.model_selection import StratifiedKFold
 from tqdm.auto import tqdm
@@ -35,6 +37,25 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)-7s | %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+
+def _load_env(config_path: str) -> None:
+    """Load repo/config-local .env files before optional backend imports."""
+    paths = [
+        Path.cwd() / ".env",
+        Path(config_path).resolve().parent / ".env",
+    ]
+    for path in paths:
+        if path.exists():
+            load_dotenv(path, override=False)
+            logger.info("Loaded environment variables from %s", path)
+
+    tabpfn_key = os.environ.get("TABPFN_API_KEY") or os.environ.get("TABPFN_TOKEN")
+    if tabpfn_key:
+        os.environ.setdefault("TABPFN_API_KEY", tabpfn_key)
+        os.environ.setdefault("TABPFN_TOKEN", tabpfn_key)
+        os.environ.setdefault("HF_TOKEN", tabpfn_key)
+        os.environ.setdefault("HUGGINGFACE_HUB_TOKEN", tabpfn_key)
 
 
 def _make_run_dir(output_dir: str, run_name: str | None) -> Path:
@@ -78,6 +99,7 @@ def _predict_proba_batched(backend, X, batch_size: int | None) -> np.ndarray:
 
 
 def run_benchmark(config_path: str, run_name: str | None = None) -> Path:
+    _load_env(config_path)
     cfg = load_config(config_path)
     output_dir = cfg.get("paths", {}).get("tfm_outputs", "outputs/tfm")
     run_dir = _make_run_dir(output_dir, run_name)
@@ -126,8 +148,9 @@ def run_benchmark(config_path: str, run_name: str | None = None) -> Path:
         desc="CV fold",
         unit="fold",
     ):
-        fold_dir = run_dir / "fold_models" / f"fold_{fold}"
-        fold_dir.mkdir(parents=True, exist_ok=True)
+        fold_models_dir = run_dir / "fold_models"
+        fold_models_dir.mkdir(parents=True, exist_ok=True)
+        fold_dir = fold_models_dir / f"fold_{fold}"
 
         X_fold = X_train.iloc[train_idx]
         y_fold = y_train.iloc[train_idx]

@@ -61,6 +61,7 @@ backend:
     label: class
     predictor_kwargs:
       eval_metric: balanced_accuracy
+      problem_type: multiclass
     fit_kwargs:
       presets: medium_quality
       time_limit: 1200
